@@ -9,6 +9,15 @@ import com.ksyun.agent.core.tool.ToolResult;
 public interface ToolInterceptor {
 
     /**
+     * 拦截器排序值，越小越先进入调用链（处于链外层）。
+     * <p>
+     * 不依赖 Spring Ordered 或 @Order，保持框架无关。
+     */
+    default int order() {
+        return 0;
+    }
+
+    /**
      * 拦截工具调用。
      *
      * @param invocation 工具调用上下文

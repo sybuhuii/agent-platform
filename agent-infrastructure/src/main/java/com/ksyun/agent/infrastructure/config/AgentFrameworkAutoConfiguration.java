@@ -11,6 +11,14 @@ import com.ksyun.agent.runtime.registry.ToolProviderRegistrar;
 import com.ksyun.agent.runtime.registry.ToolRegistry;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
 import com.ksyun.agent.runtime.run.UuidRunIdGenerator;
+import com.ksyun.agent.runtime.tool.DefaultToolInvocationGateway;
+import com.ksyun.agent.runtime.tool.TerminalToolExecutor;
+import com.ksyun.agent.runtime.tool.ToolArgumentValidationInterceptor;
+import com.ksyun.agent.runtime.tool.ToolAuditInterceptor;
+import com.ksyun.agent.runtime.tool.ToolExceptionHandlingInterceptor;
+import com.ksyun.agent.runtime.tool.ToolExecutionChain;
+import com.ksyun.agent.runtime.tool.ToolInterceptor;
+import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,6 +33,8 @@ import java.util.List;
  */
 @Configuration
 public class AgentFrameworkAutoConfiguration {
+
+    // --- 第一阶段已有 Bean ---
 
     @Bean
     @ConditionalOnMissingBean
@@ -63,5 +73,35 @@ public class AgentFrameworkAutoConfiguration {
             List<ToolProvider> providers
     ) {
         return new ToolProviderRegistrar(toolRegistry, providers);
+    }
+
+    // --- 第二阶段第1批新增 Bean ---
+
+    @Bean
+    public TerminalToolExecutor terminalToolExecutor(ToolRegistry toolRegistry) {
+        return new TerminalToolExecutor(toolRegistry);
+    }
+
+    @Bean
+    public ToolExceptionHandlingInterceptor toolExceptionHandlingInterceptor() {
+        return new ToolExceptionHandlingInterceptor();
+    }
+
+    @Bean
+    public ToolAuditInterceptor toolAuditInterceptor() {
+        return new ToolAuditInterceptor();
+    }
+
+    @Bean
+    public ToolArgumentValidationInterceptor toolArgumentValidationInterceptor(ToolRegistry toolRegistry) {
+        return new ToolArgumentValidationInterceptor(toolRegistry);
+    }
+
+    @Bean
+    public ToolInvocationGateway toolInvocationGateway(
+            List<ToolInterceptor> interceptors,
+            TerminalToolExecutor terminalToolExecutor
+    ) {
+        return new DefaultToolInvocationGateway(interceptors, terminalToolExecutor);
     }
 }
