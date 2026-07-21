@@ -1,0 +1,18 @@
+package com.ksyun.agent.core.exception;
+
+/**
+ * Agent 框架统一错误码。
+ */
+public enum AgentErrorCode {
+
+    INVALID_ARGUMENT,
+    AGENT_NOT_FOUND,
+    TOOL_NOT_FOUND,
+    TOOL_ACCESS_DENIED,
+    APPROVAL_REQUIRED,
+    CHECKPOINT_NOT_FOUND,
+    MAX_ITERATIONS_REACHED,
+    MODEL_INVOCATION_FAILED,
+    TOOL_EXECUTION_FAILED,
+    INTERNAL_ERROR
+}
