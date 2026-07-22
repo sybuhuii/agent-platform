@@ -4,3 +4,21 @@ server:
 spring:
   application:
     name: agent-platform
+
+  ai:
+    model:
+      chat: openai
+
+    openai:
+      base-url: ${MODEL_BASE_URL:https://api.deepseek.com}
+      api-key: ${MODEL_API_KEY}
+      chat:
+        options:
+          model: ${MODEL_NAME:deepseek-v4-flash}
+
+agent:
+  model:
+    enabled: ${AGENT_MODEL_ENABLED}
+
+  dev-api:
+    enabled: ${AGENT_DEV_API_ENABLED}
