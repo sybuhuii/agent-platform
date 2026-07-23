@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.tool;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.Map;
 
@@ -16,7 +17,10 @@ public record ToolResult(
         String content,
         String errorCode,
         Map<String, Object> metadata
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public ToolResult {
         metadata = metadata == null ? Map.of() : Collections.unmodifiableMap(metadata);

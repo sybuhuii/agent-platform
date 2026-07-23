@@ -37,6 +37,7 @@
         <json-schema-validator.version>1.5.4</json-schema-validator.version>
         <jackson-bom.version>2.18.2</jackson-bom.version>
         <spring-ai.version>1.1.8</spring-ai.version>
+        <langgraph4j.version>1.8.20</langgraph4j.version>
     </properties>
 
     <dependencyManagement>
@@ -86,6 +87,12 @@
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson-bom.version}</version>
+            </dependency>
+            <!-- LangGraph4j -->
+            <dependency>
+                <groupId>org.bsc.langgraph4j</groupId>
+                <artifactId>langgraph4j-core</artifactId>
+                <version>${langgraph4j.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

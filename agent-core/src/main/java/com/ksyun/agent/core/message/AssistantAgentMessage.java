@@ -16,6 +16,9 @@ public record AssistantAgentMessage(
         List<ToolCall> toolCalls
 ) implements AgentMessage {
 
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
+
     public AssistantAgentMessage {
         toolCalls = toolCalls == null ? List.of() : Collections.unmodifiableList(toolCalls);
     }

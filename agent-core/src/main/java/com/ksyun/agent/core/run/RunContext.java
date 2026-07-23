@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.run;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.Set;
 
@@ -22,7 +23,10 @@ public record RunContext(
         String runId,
         Set<String> roles,
         Set<String> permissions
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public RunContext {
         roles = roles == null ? Set.of() : Collections.unmodifiableSet(roles);

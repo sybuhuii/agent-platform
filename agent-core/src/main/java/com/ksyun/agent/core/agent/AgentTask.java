@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.agent;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.Map;
 
@@ -16,7 +17,10 @@ public record AgentTask(
         String agentName,
         String instruction,
         Map<String, Object> context
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public AgentTask {
         context = context == null ? Map.of() : Collections.unmodifiableMap(context);

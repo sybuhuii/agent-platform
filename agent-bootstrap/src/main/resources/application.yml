@@ -18,7 +18,10 @@ spring:
 
 agent:
   model:
-    enabled: ${AGENT_MODEL_ENABLED}
+    enabled: ${AGENT_MODEL_ENABLED:true}
 
   dev-api:
-    enabled: ${AGENT_DEV_API_ENABLED}
+    enabled: ${AGENT_DEV_API_ENABLED:true}
+
+  sample:
+    enabled: ${AGENT_SAMPLE_ENABLED:true}

@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.agent;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +22,10 @@ public record AgentResult(
         List<String> evidence,
         Map<String, Object> metadata,
         String errorCode
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public AgentResult {
         evidence = evidence == null ? List.of() : Collections.unmodifiableList(evidence);

@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.agent;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.Set;
 
@@ -18,7 +19,10 @@ public record AgentDefinition(
         String systemPrompt,
         Set<String> allowedTools,
         int maxIterations
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public AgentDefinition {
         if (name == null || name.isBlank()) {

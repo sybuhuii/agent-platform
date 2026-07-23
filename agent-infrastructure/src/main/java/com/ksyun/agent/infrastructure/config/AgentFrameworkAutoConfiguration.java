@@ -19,9 +19,9 @@ import com.ksyun.agent.runtime.tool.ToolExceptionHandlingInterceptor;
 import com.ksyun.agent.runtime.tool.ToolExecutionChain;
 import com.ksyun.agent.runtime.tool.ToolInterceptor;
 import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
 
@@ -31,7 +31,7 @@ import java.util.List;
  * 注册默认实现并扫描所有 Provider 进行自动注册。
  * 没有 Provider 时应用仍然可以正常启动。
  */
-@Configuration
+@AutoConfiguration
 public class AgentFrameworkAutoConfiguration {
 
     // --- 第一阶段已有 Bean ---

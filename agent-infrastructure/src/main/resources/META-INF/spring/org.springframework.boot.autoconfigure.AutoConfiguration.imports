@@ -1,0 +1,3 @@
+com.ksyun.agent.infrastructure.config.AgentFrameworkAutoConfiguration
+com.ksyun.agent.infrastructure.config.SpringAiModelConfiguration
+com.ksyun.agent.infrastructure.config.ReactEngineConfiguration

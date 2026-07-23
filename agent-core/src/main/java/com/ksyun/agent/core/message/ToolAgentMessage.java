@@ -14,4 +14,6 @@ public record ToolAgentMessage(
         String content,
         boolean error
 ) implements AgentMessage {
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 }

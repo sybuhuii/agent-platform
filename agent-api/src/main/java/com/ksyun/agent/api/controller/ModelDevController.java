@@ -57,7 +57,7 @@ public class ModelDevController {
         if (service == null) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of(
-                            "errorCode", "MODEL_NOT_AVAILABLE",
+                            "errorCode", AgentErrorCode.MODEL_NOT_AVAILABLE.name(),
                             "message", "Model is not configured or unavailable"
                     ));
         }

@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.tool;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.Map;
 
@@ -14,7 +15,10 @@ public record ToolCall(
         String id,
         String name,
         Map<String, Object> arguments
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public ToolCall {
         arguments = arguments == null ? Map.of() : Collections.unmodifiableMap(arguments);
