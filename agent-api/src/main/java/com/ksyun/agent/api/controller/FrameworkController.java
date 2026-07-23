@@ -2,9 +2,11 @@ package com.ksyun.agent.api.controller;
 
 import com.ksyun.agent.api.dto.AgentInfoResponse;
 import com.ksyun.agent.api.dto.HealthResponse;
+import com.ksyun.agent.api.dto.SupervisorInfoResponse;
 import com.ksyun.agent.api.dto.ToolInfoResponse;
 import com.ksyun.agent.application.framework.FrameworkQueryService;
 import com.ksyun.agent.core.agent.AgentDefinition;
+import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import com.ksyun.agent.core.tool.ToolDefinition;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -44,6 +46,13 @@ public class FrameworkController {
         return new HealthResponse("UP", "agent-platform");
     }
 
+    @GetMapping("/supervisors")
+    public List<SupervisorInfoResponse> listSupervisors() {
+        return frameworkQueryService.listSupervisors().stream()
+                .map(this::toSupervisorInfo)
+                .toList();
+    }
+
     private AgentInfoResponse toAgentInfo(AgentDefinition def) {
         return new AgentInfoResponse(
                 def.name(),
@@ -58,6 +67,15 @@ public class FrameworkController {
                 def.name(),
                 def.description(),
                 def.riskLevel()
+        );
+    }
+
+    private SupervisorInfoResponse toSupervisorInfo(SupervisorDefinition def) {
+        return new SupervisorInfoResponse(
+                def.name(),
+                def.description(),
+                def.memberAgents(),
+                def.maxIterations()
         );
     }
 }

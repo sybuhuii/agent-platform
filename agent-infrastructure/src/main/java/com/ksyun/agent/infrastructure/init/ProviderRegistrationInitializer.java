@@ -1,6 +1,7 @@
 package com.ksyun.agent.infrastructure.init;
 
 import com.ksyun.agent.runtime.registry.AgentProviderRegistrar;
+import com.ksyun.agent.runtime.registry.SupervisorProviderRegistrar;
 import com.ksyun.agent.runtime.registry.ToolProviderRegistrar;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,13 +20,16 @@ public class ProviderRegistrationInitializer {
     @Bean
     public CommandLineRunner registerProviders(
             AgentProviderRegistrar agentProviderRegistrar,
-            ToolProviderRegistrar toolProviderRegistrar
+            ToolProviderRegistrar toolProviderRegistrar,
+            SupervisorProviderRegistrar supervisorProviderRegistrar
     ) {
         return args -> {
             log.info("Registering agents from providers...");
             agentProviderRegistrar.registerAll();
             log.info("Registering tools from providers...");
             toolProviderRegistrar.registerAll();
+            log.info("Registering supervisors from providers...");
+            supervisorProviderRegistrar.registerAll();
             log.info("Provider registration completed.");
         };
     }

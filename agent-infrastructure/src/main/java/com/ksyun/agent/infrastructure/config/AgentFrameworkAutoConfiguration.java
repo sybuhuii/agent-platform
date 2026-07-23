@@ -3,10 +3,14 @@ package com.ksyun.agent.infrastructure.config;
 import com.ksyun.agent.application.framework.FrameworkQueryService;
 import com.ksyun.agent.core.agent.AgentProvider;
 import com.ksyun.agent.core.tool.ToolProvider;
+import com.ksyun.agent.core.supervisor.SupervisorProvider;
 import com.ksyun.agent.runtime.registry.AgentProviderRegistrar;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.DefaultAgentRegistry;
+import com.ksyun.agent.runtime.registry.DefaultSupervisorRegistry;
 import com.ksyun.agent.runtime.registry.DefaultToolRegistry;
+import com.ksyun.agent.runtime.registry.SupervisorProviderRegistrar;
+import com.ksyun.agent.runtime.registry.SupervisorRegistry;
 import com.ksyun.agent.runtime.registry.ToolProviderRegistrar;
 import com.ksyun.agent.runtime.registry.ToolRegistry;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
@@ -55,8 +59,10 @@ public class AgentFrameworkAutoConfiguration {
     }
 
     @Bean
-    public FrameworkQueryService frameworkQueryService(AgentRegistry agentRegistry, ToolRegistry toolRegistry) {
-        return new FrameworkQueryService(agentRegistry, toolRegistry);
+    public FrameworkQueryService frameworkQueryService(AgentRegistry agentRegistry,
+                                                         ToolRegistry toolRegistry,
+                                                         SupervisorRegistry supervisorRegistry) {
+        return new FrameworkQueryService(agentRegistry, toolRegistry, supervisorRegistry);
     }
 
     @Bean
@@ -103,5 +109,27 @@ public class AgentFrameworkAutoConfiguration {
             TerminalToolExecutor terminalToolExecutor
     ) {
         return new DefaultToolInvocationGateway(interceptors, terminalToolExecutor);
+    }
+
+    // --- 第四阶段第1批新增 Bean ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public SupervisorRegistry supervisorRegistry() {
+        return new DefaultSupervisorRegistry();
+    }
+
+    @Bean
+    public SupervisorProviderRegistrar supervisorProviderRegistrar(
+            SupervisorRegistry supervisorRegistry,
+            List<SupervisorProvider> providers
+    ) {
+        return new SupervisorProviderRegistrar(supervisorRegistry, providers);
+    }
+
+    @Bean
+    public com.ksyun.agent.runtime.supervisor.SupervisorExecutionValidator supervisorExecutionValidator(
+            AgentRegistry agentRegistry) {
+        return new com.ksyun.agent.runtime.supervisor.SupervisorExecutionValidator(agentRegistry);
     }
 }
