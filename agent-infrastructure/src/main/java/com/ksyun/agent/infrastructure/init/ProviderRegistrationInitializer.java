@@ -1,6 +1,7 @@
 package com.ksyun.agent.infrastructure.init;
 
 import com.ksyun.agent.runtime.registry.AgentProviderRegistrar;
+import com.ksyun.agent.runtime.registry.RoleProviderRegistrar;
 import com.ksyun.agent.runtime.registry.SupervisorProviderRegistrar;
 import com.ksyun.agent.runtime.registry.ToolProviderRegistrar;
 import org.slf4j.Logger;
@@ -21,7 +22,8 @@ public class ProviderRegistrationInitializer {
     public CommandLineRunner registerProviders(
             AgentProviderRegistrar agentProviderRegistrar,
             ToolProviderRegistrar toolProviderRegistrar,
-            SupervisorProviderRegistrar supervisorProviderRegistrar
+            SupervisorProviderRegistrar supervisorProviderRegistrar,
+            RoleProviderRegistrar roleProviderRegistrar
     ) {
         return args -> {
             log.info("Registering agents from providers...");
@@ -30,6 +32,8 @@ public class ProviderRegistrationInitializer {
             toolProviderRegistrar.registerAll();
             log.info("Registering supervisors from providers...");
             supervisorProviderRegistrar.registerAll();
+            log.info("Registering roles from providers...");
+            roleProviderRegistrar.registerAll();
             log.info("Provider registration completed.");
         };
     }

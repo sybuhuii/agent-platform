@@ -25,3 +25,10 @@ agent:
 
   sample:
     enabled: ${AGENT_SAMPLE_ENABLED:true}
+
+  auth:
+    enabled: ${AGENT_AUTH_ENABLED:true}
+
+  security:
+    session:
+      ttl: ${AGENT_SESSION_TTL:PT8H}

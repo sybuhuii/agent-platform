@@ -23,6 +23,9 @@ import com.ksyun.agent.runtime.tool.ToolExceptionHandlingInterceptor;
 import com.ksyun.agent.runtime.tool.ToolExecutionChain;
 import com.ksyun.agent.runtime.tool.ToolInterceptor;
 import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
+import com.ksyun.agent.runtime.tool.ToolAccessControlInterceptor;
+import com.ksyun.agent.runtime.tool.authorization.DefaultToolPermissionEvaluator;
+import com.ksyun.agent.runtime.tool.authorization.ToolPermissionEvaluator;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -101,6 +104,17 @@ public class AgentFrameworkAutoConfiguration {
     @Bean
     public ToolArgumentValidationInterceptor toolArgumentValidationInterceptor(ToolRegistry toolRegistry) {
         return new ToolArgumentValidationInterceptor(toolRegistry);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ToolPermissionEvaluator toolPermissionEvaluator() {
+        return new DefaultToolPermissionEvaluator();
+    }
+
+    @Bean
+    public ToolAccessControlInterceptor toolAccessControlInterceptor(ToolPermissionEvaluator permissionEvaluator) {
+        return new ToolAccessControlInterceptor(permissionEvaluator);
     }
 
     @Bean

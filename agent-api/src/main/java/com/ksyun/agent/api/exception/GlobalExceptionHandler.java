@@ -12,11 +12,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.Map;
 
 /**
- * 全局异常处理器。
- * <p>
- * SpringAI 底层异常不能原样返回客户端。
- * 客户端响应不得包含堆栈、API Key、baseUrl 中的敏感查询参数或底层实现类。
- * 后端日志记录完整异常堆栈，但不得记录密钥和完整 Prompt。
+ * 全局异常处理器，将 AgentFrameworkException 映射为 HTTP 状态码。
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -24,23 +20,19 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(AgentFrameworkException.class)
-    public ResponseEntity<Map<String, Object>> handleAgentFrameworkException(AgentFrameworkException e) {
+    public ResponseEntity<Map<String, String>> handleAgentFrameworkException(AgentFrameworkException e) {
         log.warn("Agent framework error: errorCode={}, message={}", e.getErrorCode(), e.getMessage());
-
-        HttpStatus status = mapToHttpStatus(e.getErrorCode());
-        return ResponseEntity.status(status)
+        HttpStatus httpStatus = mapErrorCodeToHttpStatus(e.getErrorCode());
+        return ResponseEntity.status(httpStatus)
                 .body(Map.of(
                         "errorCode", e.getErrorCode().name(),
-                        "message", e.getMessage()
+                        "message", e.getMessage() != null ? e.getMessage() : e.getErrorCode().name()
                 ));
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleGenericException(Exception e) {
-        // 后端日志记录完整异常堆栈，但不得记录密钥和完整 Prompt
-        log.error("Unexpected error: {}", e.getMessage(), e);
-
-        // 客户端响应不得包含堆栈或底层实现类
+    public ResponseEntity<Map<String, String>> handleGenericException(Exception e) {
+        log.error("Unexpected error", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of(
                         "errorCode", AgentErrorCode.INTERNAL_ERROR.name(),
@@ -48,13 +40,35 @@ public class GlobalExceptionHandler {
                 ));
     }
 
-    private HttpStatus mapToHttpStatus(AgentErrorCode errorCode) {
+    private HttpStatus mapErrorCodeToHttpStatus(AgentErrorCode errorCode) {
         return switch (errorCode) {
-            case INVALID_ARGUMENT -> HttpStatus.BAD_REQUEST;
-            case TOOL_NOT_FOUND -> HttpStatus.BAD_REQUEST;
+            // 400 Bad Request
+            case INVALID_ARGUMENT, TOOL_NOT_FOUND, ROLE_NOT_FOUND -> HttpStatus.BAD_REQUEST;
+
+            // 401 Unauthorized
+            case AUTHENTICATION_FAILED, INVALID_CREDENTIALS,
+                    SESSION_NOT_FOUND, SESSION_INVALID, SESSION_EXPIRED -> HttpStatus.UNAUTHORIZED;
+
+            // 403 Forbidden
+            case USER_DISABLED, PERMISSION_DENIED, TOOL_ACCESS_DENIED -> HttpStatus.FORBIDDEN;
+
+            // 404 Not Found
+            case AGENT_NOT_FOUND, SUPERVISOR_NOT_FOUND, USER_NOT_FOUND -> HttpStatus.NOT_FOUND;
+
+            // 409 Conflict
+            case USER_ALREADY_EXISTS, ROLE_ALREADY_EXISTS, APPROVAL_REQUIRED -> HttpStatus.CONFLICT;
+
+            // 502 Bad Gateway
             case MODEL_INVOCATION_FAILED -> HttpStatus.BAD_GATEWAY;
-            case TOOL_ACCESS_DENIED -> HttpStatus.FORBIDDEN;
-            case TOOL_EXECUTION_FAILED -> HttpStatus.INTERNAL_SERVER_ERROR;
+
+            // 503 Service Unavailable
+            case MODEL_NOT_AVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+
+            // 500 Internal Server Error
+            case CHECKPOINT_NOT_FOUND, MAX_ITERATIONS_REACHED,
+                    TOOL_EXECUTION_FAILED, INTERNAL_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
+
+            // 默认 500
             default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     }

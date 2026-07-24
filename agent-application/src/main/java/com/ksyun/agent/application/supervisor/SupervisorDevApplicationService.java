@@ -12,6 +12,8 @@ import com.ksyun.agent.runtime.supervisor.SupervisorEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.ksyun.agent.core.security.ToolPermissionCodes;
+
 import java.util.Map;
 import java.util.Set;
 
@@ -27,6 +29,8 @@ public class SupervisorDevApplicationService {
 
     private static final String DEV_USER_ID = "dev-user";
     private static final String DEV_SESSION_ID = "dev-session";
+    private static final Set<String> DEV_ROLES = Set.of("DEV");
+    private static final Set<String> DEV_PERMISSIONS = Set.of(ToolPermissionCodes.ALL_INVOKE);
 
     private final SupervisorRegistry supervisorRegistry;
     private final SupervisorEngine supervisorEngine;
@@ -68,8 +72,8 @@ public class SupervisorDevApplicationService {
                 DEV_SESSION_ID,
                 threadId,
                 runId,
-                Set.of(),
-                Set.of()
+                DEV_ROLES,
+                DEV_PERMISSIONS
         );
 
         log.info("SupervisorDev invoke: runId={}, supervisor={}, threadId={}", runId, supervisorName, threadId);
