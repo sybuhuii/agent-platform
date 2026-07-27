@@ -31,6 +31,7 @@ import com.ksyun.agent.runtime.security.DefaultRolePermissionResolver;
 import com.ksyun.agent.runtime.supervisor.SupervisorEngine;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -47,7 +48,10 @@ import java.util.List;
  * （Store、Hasher、认证服务）都不加载。
  * 所有 Bean 均使用 @ConditionalOnMissingBean，支持外部替换。
  */
-@Configuration
+@AutoConfiguration(after = {
+        ReactEngineConfiguration.class,
+        SupervisorEngineConfiguration.class
+})
 @ConditionalOnProperty(name = "agent.auth.enabled", havingValue = "true", matchIfMissing = true)
 public class SecurityConfiguration {
 
