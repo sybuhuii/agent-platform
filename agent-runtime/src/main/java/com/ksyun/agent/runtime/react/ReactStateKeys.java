@@ -3,10 +3,12 @@ package com.ksyun.agent.runtime.react;
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.agent.AgentTask;
+import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.run.RunContext;
+import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.tool.ToolCall;
 import com.ksyun.agent.core.tool.ToolResult;
 import org.bsc.langgraph4j.state.AgentState;
@@ -24,6 +26,7 @@ public final class ReactStateKeys {
     private ReactStateKeys() {
     }
 
+    // ---- 原有 Key ----
     public static final String AGENT_DEFINITION = "agentDefinition";
     public static final String TASK = "task";
     public static final String RUN_CONTEXT = "runContext";
@@ -36,6 +39,13 @@ public final class ReactStateKeys {
     public static final String STOP_REASON = "stopReason";
     public static final String FAILURE_MESSAGE = "failureMessage";
     public static final String FAILURE_ERROR_CODE = "failureErrorCode";
+
+    // ---- 新增 Key（Phase6 Batch2）----
+    public static final String TOOL_EXECUTION_CURSOR = "toolExecutionCursor";
+    public static final String TOOL_EXECUTION_BUFFER = "toolExecutionBuffer";
+    public static final String PENDING_APPROVAL = "pendingApproval";
+    public static final String CHECKPOINT_ID = "checkpointId";
+    public static final String RUN_STATUS = "runStatus";
 
     // ---- 类型安全读取方法 ----
 
@@ -89,6 +99,44 @@ public final class ReactStateKeys {
 
     public static AgentErrorCode getFailureErrorCode(AgentState state) {
         return state.<AgentErrorCode>value(FAILURE_ERROR_CODE).orElse(null);
+    }
+
+    // ---- 新增 Key 类型安全读取方法 ----
+
+    /**
+     * 获取工具执行游标。初始为 0，中断时保持当前危险工具下标。
+     */
+    public static int getToolExecutionCursor(AgentState state) {
+        return state.<Integer>value(TOOL_EXECUTION_CURSOR).orElse(0);
+    }
+
+    /**
+     * 获取已完成但尚未 Observe 的 ToolResult 缓冲。
+     */
+    @SuppressWarnings("unchecked")
+    public static List<ToolResult> getToolExecutionBuffer(AgentState state) {
+        return state.<List<ToolResult>>value(TOOL_EXECUTION_BUFFER).orElse(List.of());
+    }
+
+    /**
+     * 获取当前唯一审批项。普通运行为空。
+     */
+    public static PendingApproval getPendingApproval(AgentState state) {
+        return state.<PendingApproval>value(PENDING_APPROVAL).orElse(null);
+    }
+
+    /**
+     * 获取当前挂起 Checkpoint ID。普通运行为空。
+     */
+    public static String getCheckpointId(AgentState state) {
+        return state.<String>value(CHECKPOINT_ID).orElse(null);
+    }
+
+    /**
+     * 获取运行状态。
+     */
+    public static RunStatus getRunStatus(AgentState state) {
+        return state.<RunStatus>value(RUN_STATUS).orElse(null);
     }
 
     private static <T> T getRequired(AgentState state, String key, Class<T> type) {

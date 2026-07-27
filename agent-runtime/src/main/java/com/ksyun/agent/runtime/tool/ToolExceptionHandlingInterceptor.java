@@ -4,12 +4,14 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.tool.ToolInvocation;
 import com.ksyun.agent.core.tool.ToolResult;
+import com.ksyun.agent.runtime.tool.approval.AgentInterruptSignal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * 工具异常处理拦截器，作为最外层拦截器捕获整个工具执行链异常。
  * <p>
+ * 捕获 AgentInterruptSignal 时原样抛出，不转换成 ToolResult。
  * 捕获 AgentFrameworkException 时，将其错误码和安全错误信息转换为 ToolResult.failure。
  * 捕获其他异常时，记录完整堆栈，向调用方返回通用安全提示。
  * Error 等 JVM 严重错误不吞掉。
@@ -27,6 +29,9 @@ public class ToolExceptionHandlingInterceptor implements ToolInterceptor {
     public ToolResult intercept(ToolInvocation invocation, ToolExecutionChain chain) {
         try {
             return chain.proceed(invocation);
+        } catch (AgentInterruptSignal e) {
+            // 审批中断信号原样抛出，不转换成 ToolResult
+            throw e;
         } catch (AgentFrameworkException e) {
             log.warn("Tool execution failed with framework error: toolName={}, toolCallId={}, runId={}, errorCode={}",
                     invocation.toolCall().name(),

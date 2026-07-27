@@ -43,7 +43,7 @@ public class ToolArgumentValidationInterceptor implements ToolInterceptor {
 
     @Override
     public int order() {
-        return 0;
+        return -100;
     }
 
     @Override

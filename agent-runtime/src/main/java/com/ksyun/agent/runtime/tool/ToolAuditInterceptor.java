@@ -2,6 +2,7 @@ package com.ksyun.agent.runtime.tool;
 
 import com.ksyun.agent.core.tool.ToolInvocation;
 import com.ksyun.agent.core.tool.ToolResult;
+import com.ksyun.agent.runtime.tool.approval.AgentInterruptSignal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,7 +12,10 @@ import java.util.Set;
 /**
  * 工具审计拦截器，记录结构化日志。
  * <p>
- * 不记录完整原始参数和返回内容，避免敏感数据泄露。
+ * 捕获 AgentInterruptSignal 时记录安全的 APPROVAL_REQUIRED/SUSPENDED，
+ * 原样抛出，不记录为成功。
+ * 不记录完整参数、Session、权限集合或 stateData。
+ * 不把正常中断记录为系统 ERROR。
  * 审计拦截器不能修改业务执行结果。
  */
 public class ToolAuditInterceptor implements ToolInterceptor {
@@ -29,7 +33,6 @@ public class ToolAuditInterceptor implements ToolInterceptor {
         String toolCallId = invocation.toolCall().id();
         String runId = invocation.runContext().runId();
         String userId = invocation.runContext().userId();
-        long threadId = Thread.currentThread().getId();
         Set<String> argumentKeys = invocation.toolCall().arguments().keySet();
 
         Instant startTime = Instant.now();
@@ -38,6 +41,18 @@ public class ToolAuditInterceptor implements ToolInterceptor {
 
         try {
             result = chain.proceed(invocation);
+        } catch (AgentInterruptSignal e) {
+            // 审批中断：记录安全状态，原样抛出
+            Instant endTime = Instant.now();
+            long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            auditLog.info(
+                    "toolName={} toolCallId={} runId={} userId={} "
+                            + "argumentKeys={} startTime={} endTime={} durationMs={} "
+                            + "success=false errorCode=APPROVAL_REQUIRED status=SUSPENDED",
+                    toolName, toolCallId, runId, userId,
+                    argumentKeys, startTime, endTime, durationMs
+            );
+            throw e;
         } catch (Throwable t) {
             caught = t;
         }
@@ -47,10 +62,10 @@ public class ToolAuditInterceptor implements ToolInterceptor {
 
         if (caught != null) {
             auditLog.info(
-                    "toolName={} toolCallId={} runId={} threadId={} userId={} "
+                    "toolName={} toolCallId={} runId={} userId={} "
                             + "argumentKeys={} startTime={} endTime={} durationMs={} "
                             + "success=false errorCode=UNCAUGHT_EXCEPTION",
-                    toolName, toolCallId, runId, threadId, userId,
+                    toolName, toolCallId, runId, userId,
                     argumentKeys, startTime, endTime, durationMs
             );
             // 审计拦截器不修改结果，重新抛出异常让外层处理
@@ -61,10 +76,10 @@ public class ToolAuditInterceptor implements ToolInterceptor {
         }
 
         auditLog.info(
-                "toolName={} toolCallId={} runId={} threadId={} userId={} "
+                "toolName={} toolCallId={} runId={} userId={} "
                         + "argumentKeys={} startTime={} endTime={} durationMs={} "
                         + "success={} errorCode={}",
-                toolName, toolCallId, runId, threadId, userId,
+                toolName, toolCallId, runId, userId,
                 argumentKeys, startTime, endTime, durationMs,
                 result.success(),
                 result.errorCode()

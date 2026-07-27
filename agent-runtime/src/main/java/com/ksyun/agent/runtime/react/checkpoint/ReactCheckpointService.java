@@ -1,41 +1,55 @@
 package com.ksyun.agent.runtime.react.checkpoint;
 
 import com.ksyun.agent.core.approval.ApprovalStatus;
-import com.ksyun.agent.core.approval.InterruptReason;
 import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointExecutionType;
+import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.run.RunContext;
-import com.ksyun.agent.core.run.RunStatus;
+import com.ksyun.agent.core.store.CheckpointIdGenerator;
 import com.ksyun.agent.core.store.CheckpointStore;
-import com.ksyun.agent.core.tool.ToolCall;
+import com.ksyun.agent.runtime.react.ReactAgentState;
+import com.ksyun.agent.runtime.react.ReactStateKeys;
+import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * ReAct Checkpoint 服务。
  * <p>
- * 负责 Checkpoint 的保存和加载，将 ReactAgentState 的关键数据
- * 序列化为 AgentCheckpoint。
+ * 依赖：CheckpointStore、CheckpointIdGenerator、CheckpointValidator、Clock
  * <p>
- * 保存内容：
- * - runId, threadId, status, version, updatedAt
- * - messages, pendingToolCalls, latestToolResults, iteration
- * - approval（当状态为 INTERRUPTED 时）
+ * suspend 方法职责：
+ * - approval 由 ToolApprovalInterceptor 创建，Service 不重新生成 approvalId
+ * - 创建完整状态快照，并覆盖 cursor、buffer、pendingApproval、SUSPENDED
+ * - executionType=REACT_AGENT
+ * - nodeName 使用真实 execute_tools 节点名
+ * - runId、threadId、userId 来自 RunContext
+ * - 新 Checkpoint version=0
+ * - status=CheckpointStatus.SUSPENDED
+ * - 保存前调用 CheckpointValidator
+ * - 使用 CheckpointStore.save
  * <p>
- * 不保存的内容：
- * - agentDefinition（可从 AgentRegistry 恢复）
- * - task（可从上层传入）
- * - runContext 中的密码、credentialHash、sessionId
+ * 多次挂起支持：
+ * - 首次挂起：不存在 Checkpoint，创建 version=0
+ * - 再次挂起：已存在同 runId Checkpoint
+ *   - 如果新 approvalId 与已有不同：使用 updateIfVersionMatches 更新
+ *   - version 在已有基础上 +1
+ *   - 如果 approvalId 相同：幂等返回已有 Checkpoint
+ * - 不得无条件覆盖
+ * - 不得用 LangGraph4j CheckpointSaver
  * <p>
- * 不实现恢复逻辑，不修改 RunContext。
+ * 不实现恢复。不删除旧 Checkpoint。
+ * 不记录完整 stateData、参数或审批对象。
  * 纯 Java 实现，不依赖 Spring。
  */
 public class ReactCheckpointService {
@@ -43,110 +57,232 @@ public class ReactCheckpointService {
     private static final Logger log = LoggerFactory.getLogger(ReactCheckpointService.class);
 
     private final CheckpointStore checkpointStore;
+    private final CheckpointIdGenerator checkpointIdGenerator;
+    private final CheckpointValidator checkpointValidator;
+    private final Clock clock;
 
-    public ReactCheckpointService(CheckpointStore checkpointStore) {
+    public ReactCheckpointService(CheckpointStore checkpointStore,
+                                   CheckpointIdGenerator checkpointIdGenerator,
+                                   CheckpointValidator checkpointValidator,
+                                   Clock clock) {
         this.checkpointStore = checkpointStore;
+        this.checkpointIdGenerator = checkpointIdGenerator;
+        this.checkpointValidator = checkpointValidator;
+        this.clock = clock;
     }
 
     /**
-     * 保存 Checkpoint。
+     * 挂起运行，保存 Checkpoint。
      * <p>
-     * 当 status 为 INTERRUPTED 时，构造 PendingApproval 并保存到 Checkpoint。
+     * 支持首次挂起和再次挂起。
      *
-     * @param runId      运行 ID
-     * @param threadId   线程 ID
-     * @param status     运行状态
-     * @param stateData  状态数据快照
-     * @param version    当前版本号
-     * @param toolCall   触发中断的工具调用（可为 null）
-     * @param interruptReason 中断原因（可为 null）
-     * @param reason     中断描述（可为 null）
-     * @param runContext 运行上下文
+     * @param state     当前 ReactAgentState
+     * @param nodeName  恢复节点名（如 execute_tools）
+     * @param approval  由 ToolApprovalInterceptor 创建的审批记录
+     * @param cursor    当前执行游标
+     * @param buffer    已完成的 ToolResult 缓冲
      * @return 保存后的 Checkpoint
      */
-    public AgentCheckpoint saveCheckpoint(String runId,
-                                            String threadId,
-                                            RunStatus status,
-                                            Map<String, Object> stateData,
-                                            long version,
-                                            ToolCall toolCall,
-                                            InterruptReason interruptReason,
-                                            String reason,
-                                            RunContext runContext) {
-        PendingApproval approval = null;
+    public AgentCheckpoint suspend(ReactAgentState state,
+                                    String nodeName,
+                                    PendingApproval approval,
+                                    int cursor,
+                                    List<com.ksyun.agent.core.tool.ToolResult> buffer) {
+        RunContext runContext = ReactStateKeys.getRunContext(state);
+        var definition = ReactStateKeys.getAgentDefinition(state);
 
-        if (status == RunStatus.INTERRUPTED) {
-            if (toolCall == null) {
-                throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                        "toolCall must not be null when status is INTERRUPTED");
-            }
-            if (interruptReason == null) {
-                throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                        "interruptReason must not be null when status is INTERRUPTED");
-            }
-            if (reason == null || reason.isBlank()) {
-                throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                        "reason must not be blank when status is INTERRUPTED");
-            }
+        // 检查已存在 Checkpoint
+        Optional<AgentCheckpoint> existing = checkpointStore.load(runContext.runId());
 
-            // 构建 safeArguments：只保留参数名列表，不包含值
-            Map<String, Object> safeArgs = buildSafeArguments(toolCall);
-
-            approval = new PendingApproval(
-                    generateApprovalId(),
-                    runId,
-                    threadId,
-                    toolCall,
-                    interruptReason,
-                    reason,
-                    safeArgs,
-                    ApprovalStatus.PENDING,
-                    Instant.now()
-            );
+        if (existing.isPresent()) {
+            return handleReSuspend(existing.get(), state, nodeName, approval, cursor, buffer, runContext, definition);
         }
 
+        // 首次挂起：创建 version=0 的 Checkpoint
+        return createNewCheckpoint(state, nodeName, approval, cursor, buffer, runContext, definition);
+    }
+
+    /**
+     * 首次挂起：创建新 Checkpoint。
+     */
+    private AgentCheckpoint createNewCheckpoint(ReactAgentState state,
+                                                 String nodeName,
+                                                 PendingApproval approval,
+                                                 int cursor,
+                                                 List<com.ksyun.agent.core.tool.ToolResult> buffer,
+                                                 RunContext runContext,
+                                                 com.ksyun.agent.core.agent.AgentDefinition definition) {
+        // 同一 approvalId 幂等检查
+        Optional<AgentCheckpoint> existing = checkpointStore.load(runContext.runId());
+        if (existing.isPresent()) {
+            AgentCheckpoint existingCp = existing.get();
+            if (existingCp.pendingApproval() != null
+                    && existingCp.pendingApproval().approvalId().equals(approval.approvalId())) {
+                log.info("Checkpoint already exists for runId={}, approvalId={}, returning existing",
+                        runContext.runId(), approval.approvalId());
+                return existingCp;
+            }
+            // 不同 approvalId 走再次挂起路径
+            return handleReSuspend(existingCp, state, nodeName, approval, cursor, buffer, runContext, definition);
+        }
+
+        // 补全 approval 中的 agentName 和 nodeName
+        PendingApproval filledApproval = fillApprovalContext(approval, definition.name(), nodeName);
+
+        Map<String, Object> stateData = buildStateData(state, cursor, buffer, filledApproval, definition.name(), nodeName);
+
+        String checkpointId = checkpointIdGenerator.generate();
+        Instant now = clock.instant();
+
         AgentCheckpoint checkpoint = new AgentCheckpoint(
-                runId,
-                threadId,
-                status,
-                stateData != null ? new HashMap<>(stateData) : Map.of(),
-                approval,
-                version,
-                Instant.now()
+                checkpointId,
+                runContext.runId(),
+                runContext.threadId(),
+                runContext.userId(),
+                runContext.sessionId(),
+                CheckpointExecutionType.REACT_AGENT,
+                definition.name(),
+                nodeName,
+                stateData,
+                filledApproval,
+                CheckpointStatus.SUSPENDED,
+                0,
+                now,
+                now
         );
 
+        checkpointValidator.validate(checkpoint);
         checkpointStore.save(checkpoint);
 
-        log.info("Checkpoint saved: runId={}, status={}, version={}, hasApproval={}",
-                runId, status, version, approval != null);
+        log.info("Checkpoint saved: checkpointId={}, runId={}, version=0, approvalId={}",
+                checkpointId, runContext.runId(), filledApproval.approvalId());
 
         return checkpoint;
     }
 
     /**
-     * 加载 Checkpoint。
-     *
-     * @param runId 运行 ID
-     * @return Checkpoint，不存在时返回 Optional.empty
+     * 再次挂起：更新已有 Checkpoint。
+     * <p>
+     * - 新 approvalId 与已有不同：使用 updateIfVersionMatches
+     * - version 在已有基础上 +1
+     * - 新 checkpointId
+     * - 如果 approvalId 相同：幂等返回已有 Checkpoint
      */
-    public Optional<AgentCheckpoint> loadCheckpoint(String runId) {
-        return checkpointStore.load(runId);
+    private AgentCheckpoint handleReSuspend(AgentCheckpoint existingCp,
+                                             ReactAgentState state,
+                                             String nodeName,
+                                             PendingApproval approval,
+                                             int cursor,
+                                             List<com.ksyun.agent.core.tool.ToolResult> buffer,
+                                             RunContext runContext,
+                                             com.ksyun.agent.core.agent.AgentDefinition definition) {
+        // 相同 approvalId 幂等返回
+        if (existingCp.pendingApproval() != null
+                && existingCp.pendingApproval().approvalId().equals(approval.approvalId())) {
+            log.info("Re-suspend with same approvalId, idempotent: runId={}, approvalId={}",
+                    runContext.runId(), approval.approvalId());
+            return existingCp;
+        }
+
+        // 新 approvalId：更新 Checkpoint
+        // 补全 approval 中的 agentName 和 nodeName
+        PendingApproval filledApproval = fillApprovalContext(approval, definition.name(), nodeName);
+
+        Map<String, Object> stateData = buildStateData(state, cursor, buffer, filledApproval, definition.name(), nodeName);
+
+        String newCheckpointId = checkpointIdGenerator.generate();
+        long expectedVersion = existingCp.version();
+        Instant now = clock.instant();
+
+        AgentCheckpoint updatedCheckpoint = new AgentCheckpoint(
+                newCheckpointId,
+                runContext.runId(),
+                runContext.threadId(),
+                runContext.userId(),
+                runContext.sessionId(),
+                CheckpointExecutionType.REACT_AGENT,
+                definition.name(),
+                nodeName,
+                stateData,
+                filledApproval,
+                CheckpointStatus.SUSPENDED,
+                expectedVersion + 1,
+                existingCp.createdAt(),
+                now
+        );
+
+        checkpointValidator.validate(updatedCheckpoint);
+
+        boolean success = checkpointStore.updateIfVersionMatches(updatedCheckpoint, expectedVersion);
+        if (!success) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_CONFLICT,
+                    "Checkpoint version conflict during re-suspension: runId=" + runContext.runId());
+        }
+
+        log.info("Checkpoint re-suspended: checkpointId={}, runId={}, version={}, newApprovalId={}",
+                newCheckpointId, runContext.runId(), expectedVersion + 1, filledApproval.approvalId());
+
+        return updatedCheckpoint;
     }
 
     /**
-     * 构建脱敏参数：只保留参数名列表，不包含值。
+     * 构造完整状态快照。
      */
-    private Map<String, Object> buildSafeArguments(ToolCall toolCall) {
-        if (toolCall.arguments() == null || toolCall.arguments().isEmpty()) {
-            return Map.of();
-        }
-        // 只保留参数名列表
-        Map<String, Object> safeArgs = new HashMap<>();
-        safeArgs.put("argumentNames", toolCall.arguments().keySet());
-        return safeArgs;
+    private Map<String, Object> buildStateData(ReactAgentState state,
+                                                 int cursor,
+                                                 List<com.ksyun.agent.core.tool.ToolResult> buffer,
+                                                 PendingApproval approval,
+                                                 String agentName,
+                                                 String nodeName) {
+        Map<String, Object> stateData = new HashMap<>(state.data());
+        stateData.put(ReactStateKeys.TOOL_EXECUTION_CURSOR, cursor);
+        stateData.put(ReactStateKeys.TOOL_EXECUTION_BUFFER, buffer != null ? List.copyOf(buffer) : List.of());
+        stateData.put(ReactStateKeys.PENDING_APPROVAL, approval);
+        stateData.put(ReactStateKeys.RUN_STATUS, com.ksyun.agent.core.run.RunStatus.SUSPENDED);
+        stateData.put(ReactStateKeys.STOP_REASON, com.ksyun.agent.runtime.react.ReactStopReason.SUSPENDED);
+        return stateData;
     }
 
-    private String generateApprovalId() {
-        return "apr-" + UUID.randomUUID();
+    /**
+     * 补全 PendingApproval 中由 ToolApprovalInterceptor 留空的 agentName 和 nodeName。
+     * <p>
+     * InterruptPayload 和 PendingApproval 都是不可变 record，需要重建。
+     */
+    private PendingApproval fillApprovalContext(PendingApproval approval, String agentName, String nodeName) {
+        com.ksyun.agent.core.approval.InterruptPayload original = approval.payload();
+        // 只有真正为空时才补全
+        if (original.agentName().isBlank() || original.nodeName().isBlank()) {
+            com.ksyun.agent.core.approval.InterruptPayload filled = new com.ksyun.agent.core.approval.InterruptPayload(
+                    original.approvalId(),
+                    original.runId(),
+                    original.threadId(),
+                    original.userId(),
+                    original.agentName().isBlank() ? agentName : original.agentName(),
+                    original.nodeName().isBlank() ? nodeName : original.nodeName(),
+                    original.reason(),
+                    original.operationType(),
+                    original.operationName(),
+                    original.safeArguments(),
+                    original.riskLevel(),
+                    original.requestedAt(),
+                    original.toolCallId(),
+                    original.operationFingerprint()
+            );
+            return new PendingApproval(
+                    filled,
+                    approval.status(),
+                    approval.decision(),
+                    approval.createdAt(),
+                    approval.updatedAt()
+            );
+        }
+        return approval;
+    }
+
+    /**
+     * 加载 Checkpoint。
+     */
+    public Optional<AgentCheckpoint> loadCheckpoint(String runId) {
+        return checkpointStore.load(runId);
     }
 }

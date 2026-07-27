@@ -1,21 +1,33 @@
 package com.ksyun.agent.infrastructure.config;
 
+import com.ksyun.agent.application.approval.ApprovalDecisionService;
+import com.ksyun.agent.application.approval.ApprovalResumeApplicationService;
 import com.ksyun.agent.application.react.ReactDevApplicationService;
-import com.ksyun.agent.core.tool.AgentTool;
+import com.ksyun.agent.core.approval.ApprovalIdGenerator;
+import com.ksyun.agent.core.sanitizer.SensitiveValueSanitizer;
+import com.ksyun.agent.core.store.CheckpointIdGenerator;
+import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.react.DefaultReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentGraphFactory;
 import com.ksyun.agent.runtime.react.ReactExecutionValidator;
+import com.ksyun.agent.runtime.react.ReactResumeEngine;
 import com.ksyun.agent.runtime.react.ReactRouter;
+import com.ksyun.agent.runtime.react.ReactToolExecutionRouter;
+import com.ksyun.agent.runtime.react.checkpoint.CheckpointResumeCoordinator;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointService;
+import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointStateMapper;
+import com.ksyun.agent.runtime.react.checkpoint.ReactResumeValidator;
+import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
 import com.ksyun.agent.runtime.react.node.DefaultReactSuspendNode;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.ToolRegistry;
-import com.ksyun.agent.core.store.CheckpointStore;
+import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
 import org.bsc.langgraph4j.action.NodeAction;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
@@ -27,6 +39,8 @@ import com.ksyun.agent.runtime.react.node.ReactObserveNode;
 import com.ksyun.agent.runtime.react.node.ReactReasonNode;
 import com.ksyun.agent.runtime.react.node.ReactToolExecutionNode;
 import com.ksyun.agent.runtime.react.ReactAgentState;
+
+import java.time.Clock;
 
 /**
  * ReAct 引擎 Spring 装配配置。
@@ -50,8 +64,11 @@ public class ReactEngineConfiguration {
     }
 
     @Bean
-    public ReactToolExecutionNode reactToolExecutionNode(com.ksyun.agent.runtime.tool.ToolInvocationGateway toolGateway) {
-        return new com.ksyun.agent.runtime.react.node.DefaultReactToolExecutionNode(toolGateway);
+    public ReactToolExecutionNode reactToolExecutionNode(
+            ToolInvocationGateway toolGateway,
+            ReactCheckpointService checkpointService,
+            Clock clock) {
+        return new com.ksyun.agent.runtime.react.node.DefaultReactToolExecutionNode(toolGateway, checkpointService, clock);
     }
 
     @Bean
@@ -75,18 +92,32 @@ public class ReactEngineConfiguration {
     }
 
     @Bean
-    public ReactCheckpointService reactCheckpointService(CheckpointStore checkpointStore) {
-        return new ReactCheckpointService(checkpointStore);
+    public CheckpointValidator checkpointValidator() {
+        return new CheckpointValidator();
     }
 
     @Bean
-    public NodeAction<ReactAgentState> reactSuspendNode(ReactCheckpointService checkpointService) {
-        return new DefaultReactSuspendNode(checkpointService);
+    public ReactCheckpointService reactCheckpointService(
+            CheckpointStore checkpointStore,
+            CheckpointIdGenerator checkpointIdGenerator,
+            CheckpointValidator checkpointValidator,
+            Clock clock) {
+        return new ReactCheckpointService(checkpointStore, checkpointIdGenerator, checkpointValidator, clock);
+    }
+
+    @Bean
+    public NodeAction<ReactAgentState> reactSuspendNode() {
+        return new DefaultReactSuspendNode();
     }
 
     @Bean
     public ReactRouter reactRouter() {
         return new ReactRouter();
+    }
+
+    @Bean
+    public ReactToolExecutionRouter reactToolExecutionRouter() {
+        return new ReactToolExecutionRouter();
     }
 
     // ---- 图工厂和引擎 ----
@@ -99,13 +130,14 @@ public class ReactEngineConfiguration {
             ReactCompleteNode completeNode,
             ReactMaxIterationsNode maxIterationsNode,
             ReactFailureNode failureNode,
-            NodeAction<ReactAgentState> suspendNode,
-            ReactRouter router
+            @Qualifier("reactSuspendNode") NodeAction<ReactAgentState> suspendNode,
+            ReactRouter router,
+            ReactToolExecutionRouter toolExecutionRouter
     ) {
         return new ReactAgentGraphFactory(
                 reasonNode, toolExecutionNode, observeNode,
                 completeNode, maxIterationsNode, failureNode,
-                suspendNode, router
+                suspendNode, router, toolExecutionRouter
         );
     }
 
@@ -113,6 +145,50 @@ public class ReactEngineConfiguration {
     public ReactAgentEngine reactAgentEngine(ReactExecutionValidator validator, ReactAgentGraphFactory graphFactory) {
         return new DefaultReactAgentEngine(validator, graphFactory);
     }
+
+    // ---- Phase6 Batch3 恢复链 ----
+
+    @Bean
+    public ReactResumeValidator reactResumeValidator() {
+        return new ReactResumeValidator();
+    }
+
+    @Bean
+    public ReactCheckpointStateMapper reactCheckpointStateMapper() {
+        return new ReactCheckpointStateMapper();
+    }
+
+    @Bean
+    public CheckpointResumeCoordinator checkpointResumeCoordinator(
+            CheckpointStore checkpointStore,
+            ReactResumeValidator resumeValidator,
+            Clock clock) {
+        return new CheckpointResumeCoordinator(checkpointStore, resumeValidator, clock);
+    }
+
+    @Bean
+    public ReactResumeEngine reactResumeEngine(
+            CheckpointResumeCoordinator resumeCoordinator,
+            ReactCheckpointStateMapper stateMapper,
+            ReactCheckpointService checkpointService,
+            CheckpointStore checkpointStore,
+            ReactAgentGraphFactory graphFactory) {
+        return new ReactResumeEngine(resumeCoordinator, stateMapper, checkpointService, checkpointStore, graphFactory);
+    }
+
+    @Bean
+    public ApprovalDecisionService approvalDecisionService(CheckpointStore checkpointStore, Clock clock) {
+        return new ApprovalDecisionService(checkpointStore, clock);
+    }
+
+    @Bean
+    public ApprovalResumeApplicationService approvalResumeApplicationService(
+            ApprovalDecisionService decisionService,
+            ReactResumeEngine resumeEngine) {
+        return new ApprovalResumeApplicationService(decisionService, resumeEngine);
+    }
+
+    // ---- Dev Application Service ----
 
     @Bean
     public ReactDevApplicationService reactDevApplicationService(

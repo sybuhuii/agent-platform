@@ -12,6 +12,8 @@ import java.util.List;
  * <p>
  * 工具实例由 Provider 内部持有，不声明为独立 AgentTool Bean，
  * 确保所有工具只通过 BuiltinToolProvider 注册一次。
+ * <p>
+ * FileDeleteTool 已删除（Phase6 Batch2 替换为 DemoRecordStore + DeleteDemoRecordTool）。
  */
 @Configuration
 public class BuiltinToolConfiguration {
@@ -22,8 +24,7 @@ public class BuiltinToolConfiguration {
                 new CalculatorTool(),
                 new CurrentTimeTool(),
                 new EchoTool(),
-                new TextSearchTool(),
-                new FileDeleteTool()
+                new TextSearchTool()
         );
         return new BuiltinToolProvider(tools);
     }

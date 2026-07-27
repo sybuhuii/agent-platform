@@ -8,6 +8,7 @@ public enum RunStatus {
     CREATED,
     RUNNING,
     INTERRUPTED,
+    SUSPENDED,
     COMPLETED,
     FAILED
 }

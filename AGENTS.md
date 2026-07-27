@@ -242,3 +242,11 @@
 -后端编译及bootstrap打包通过
 -涉及前端时前端构建通过
 -最终输出未伪造验证结果
+
+22. ## Windows 构建环境
+
+- 项目根目录：`C:\Users\KC\Desktop\agent-platform`
+- JAVA_HOME：`C:\Users\KC\.jdks\openjdk-26.0.1`
+- Maven：`C:\Program Files\JetBrains\IntelliJ IDEA 2026.1.4\plugins\maven\lib\maven3\bin\mvn.cmd`
+- 不要扫描注册表或磁盘寻找 Java/Maven。
+- 完成全部修改后只执行一次编译。

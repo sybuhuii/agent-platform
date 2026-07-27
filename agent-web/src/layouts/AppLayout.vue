@@ -14,6 +14,7 @@
         <router-link to="/agents" class="nav-item">单Agent调用</router-link>
         <router-link to="/supervisors" class="nav-item">Supervisor调用</router-link>
         <router-link to="/permission-demo" class="nav-item">权限差异演示</router-link>
+        <router-link to="/approval" class="nav-item">人机审批</router-link>
         <router-link v-if="hasPermission('security:user:read')" to="/admin/users" class="nav-item">用户管理</router-link>
         <router-link v-if="hasPermission('security:role:read')" to="/admin/roles" class="nav-item">角色管理</router-link>
       </nav>

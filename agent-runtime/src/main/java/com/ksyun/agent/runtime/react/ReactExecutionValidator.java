@@ -14,6 +14,14 @@ import com.ksyun.agent.core.run.RunContext;
 public class ReactExecutionValidator {
 
     /**
+     * 兼容构造器，保留 AgentRegistry 参数供 Spring 装配注入。
+     * 当前校验逻辑不使用 AgentRegistry，保留参数以保持装配兼容。
+     */
+    public ReactExecutionValidator(com.ksyun.agent.runtime.registry.AgentRegistry agentRegistry) {
+        // 当前校验逻辑不依赖 AgentRegistry
+    }
+
+    /**
      * 校验 ReAct 执行请求参数。
      *
      * @param definition Agent 定义

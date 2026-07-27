@@ -30,6 +30,11 @@ const routes = [
     component: () => import('../views/PermissionDemoView.vue')
   },
   {
+    path: '/approval',
+    name: 'HitlApproval',
+    component: () => import('../views/HitlApprovalView.vue')
+  },
+  {
     path: '/admin/users',
     name: 'UserManagement',
     component: () => import('../views/UserManagementView.vue'),

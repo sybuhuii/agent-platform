@@ -21,7 +21,7 @@ import java.util.Set;
  * 避免重复注册冲突。
  */
 @Configuration
-@ConditionalOnProperty(name = "agent.sample.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "agent.sample.enabled", havingValue = "true")
 public class SampleDataInitializer {
 
     private static final Logger log = LoggerFactory.getLogger(SampleDataInitializer.class);

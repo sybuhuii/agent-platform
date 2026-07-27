@@ -12,6 +12,9 @@ import java.util.Set;
  * <p>
  * Only returns AgentDefinition, does not implement Agent runtime logic.
  * Registered via AgentProviderRegistrar automatically.
+ * <p>
+ * 已删除 admin_agent（使用 FileDeleteTool 的模拟删除演示），
+ * 替换为 approval_demo_agent（使用 list_demo_records + delete_demo_record）。
  */
 public class SampleAgentProvider implements AgentProvider {
 
@@ -20,7 +23,7 @@ public class SampleAgentProvider implements AgentProvider {
         return List.of(
                 utilityAgent(),
                 calculatorAgent(),
-                adminAgent()
+                approvalDemoAgent()
         );
     }
 
@@ -50,16 +53,18 @@ public class SampleAgentProvider implements AgentProvider {
         );
     }
 
-    private AgentDefinition adminAgent() {
+    private AgentDefinition approvalDemoAgent() {
         return new AgentDefinition(
-                "admin_agent",
-                "Admin assistant agent with dangerous tools",
-                "You are an admin assistant. You can use basic tools and the file_delete tool.\n"
-                        + "When asked to delete a file, you must use the file_delete tool.\n"
-                        + "Generate final answer after receiving tool results.\n"
-                        + "Note: file_delete is a high-risk operation that may require manual approval.",
-                Set.of("calculator", "current_time", "echo", "file_delete"),
-                4
+                "approval_demo_agent",
+                "Approval demonstration agent with dangerous tool",
+                "You are an approval demonstration assistant. You can use list_demo_records to view records and delete_demo_record to delete them.\n"
+                        + "When asked to delete a record, you must use the delete_demo_record tool.\n"
+                        + "IMPORTANT: delete_demo_record is a high-risk operation that requires manual approval.\n"
+                        + "Always use the specified tools to complete tasks. Never fabricate results.\n"
+                        + "Generate final answer based on real ToolResult. Never assume a tool has been executed if you did not receive its result.\n"
+                        + "Clearly state when approval is pending or a tool was not executed.",
+                Set.of("list_demo_records", "delete_demo_record"),
+                5
         );
     }
 }

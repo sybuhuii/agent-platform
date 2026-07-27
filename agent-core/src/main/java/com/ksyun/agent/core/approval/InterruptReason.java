@@ -6,7 +6,8 @@ package com.ksyun.agent.core.approval;
  * 与 {@link ApprovalStatus} 和 {@link ApprovalDecision} 对应，
  * 但 InterruptReason 描述的是"为什么中断"，不是"审批结果"。
  * <p>
- * 只在本批定义枚举类型和常量，不实现 interrupt/resume 流程。
+ * 注意：ACL 拒绝必须直接拒绝，不能创建审批。
+ * TOOL_PERMISSION_REQUIRED 不用于"无权限工具可通过人工审批强制执行"。
  */
 public enum InterruptReason {
 
@@ -16,7 +17,8 @@ public enum InterruptReason {
     TOOL_RISK_HIGH,
 
     /**
-     * 工具需要特定权限，当前用户不具备，需要人工确认是否强制执行。
+     * 预留，不代表"无权限可通过审批强制执行"。
+     * ACL 拒绝必须直接拒绝，不创建审批。
      */
     TOOL_PERMISSION_REQUIRED,
 

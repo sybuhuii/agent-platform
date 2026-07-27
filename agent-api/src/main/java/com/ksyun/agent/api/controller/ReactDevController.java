@@ -66,6 +66,7 @@ public class ReactDevController {
 
         ReactDevRunResult result = service.invoke(request.agentName(), request.message());
 
+        // SUSPENDED 正常返回 200
         return ResponseEntity.ok(toResponse(result));
     }
 
@@ -79,7 +80,8 @@ public class ReactDevController {
                 agentResult.content(),
                 agentResult.errorCode(),
                 agentResult.evidence(),
-                agentResult.metadata()
+                agentResult.metadata(),
+                agentResult.status()
         );
     }
 }

@@ -1,75 +1,86 @@
 package com.ksyun.agent.core.approval;
 
-import com.ksyun.agent.core.tool.ToolCall;
-
 import java.time.Instant;
-import java.util.Collections;
-import java.util.Map;
 import java.util.Objects;
 
 /**
  * 待审批记录，不可变。
  * <p>
- * 当工具执行需要人工审批时，创建此记录并保存到 Checkpoint。
- * <p>
  * 约束：
- * - status 为 PENDING 时不得修改为 APPROVED/REJECTED（本批不实现 approve/reject 流程）
- * - approvalId、runId 不得为空
- * - toolCall 不得为 null
- * - safeArguments 不得包含完整原始参数，仅保留参数名列表用于展示
- * - reason 和 interruptReason 必须一致，不得矛盾
- * - 不得包含密码、credentialHash、sessionId 或 HTTP 对象
- * - 审批结果未持久化前不得继续执行工具
+ * - PENDING 时 decision 必须为空
+ * - APPROVED 或 REJECTED 时 decision 必须存在
+ * - decision 的 approvalId 和 status 必须与 PendingApproval 一致
+ * - 状态转换生成新对象，禁止修改旧对象
+ * - 不得直接保存用于展示的原始 ToolCall
+ * - Map 和集合必须防御性复制并返回不可变快照（InterruptPayload 已保证）
  *
- * @param approvalId      审批 ID，全局唯一
- * @param runId           运行 ID
- * @param threadId        线程 ID
- * @param toolCall        触发审批的工具调用
- * @param interruptReason 中断原因枚举
- * @param reason          中断原因人类可读描述
- * @param safeArguments   脱敏后的参数（只包含参数名列表，不包含值）
- * @param status          审批状态
- * @param createdAt       创建时间
+ * 恢复语义：
+ * 本框架采用"节点重跑"恢复——中断发生在危险操作真正执行之前，
+ * 恢复后从保存的节点重新执行，不是从 Java 方法中间继续。
  */
 public record PendingApproval(
-        String approvalId,
-        String runId,
-        String threadId,
-        ToolCall toolCall,
-        InterruptReason interruptReason,
-        String reason,
-        Map<String, Object> safeArguments,
+        InterruptPayload payload,
         ApprovalStatus status,
-        Instant createdAt
+        ApprovalDecision decision,
+        Instant createdAt,
+        Instant updatedAt
 ) {
 
     public PendingApproval {
-        Objects.requireNonNull(approvalId, "approvalId must not be null");
-        if (approvalId.isBlank()) {
-            throw new IllegalArgumentException("approvalId must not be blank");
-        }
-        Objects.requireNonNull(runId, "runId must not be null");
-        if (runId.isBlank()) {
-            throw new IllegalArgumentException("runId must not be blank");
-        }
-        Objects.requireNonNull(threadId, "threadId must not be null");
-        if (threadId.isBlank()) {
-            throw new IllegalArgumentException("threadId must not be blank");
-        }
-        Objects.requireNonNull(toolCall, "toolCall must not be null");
-        Objects.requireNonNull(interruptReason, "interruptReason must not be null");
-        Objects.requireNonNull(reason, "reason must not be null");
-        if (reason.isBlank()) {
-            throw new IllegalArgumentException("reason must not be blank");
-        }
+        Objects.requireNonNull(payload, "payload must not be null");
         Objects.requireNonNull(status, "status must not be null");
         Objects.requireNonNull(createdAt, "createdAt must not be null");
+        Objects.requireNonNull(updatedAt, "updatedAt must not be null");
 
-        // safeArguments 防御性处理
-        if (safeArguments == null) {
-            safeArguments = Map.of();
-        } else {
-            safeArguments = Collections.unmodifiableMap(safeArguments);
+        // PENDING 时 decision 必须为空
+        if (status == ApprovalStatus.PENDING && decision != null) {
+            throw new IllegalArgumentException(
+                    "decision must be null when status is PENDING");
         }
+        // APPROVED 或 REJECTED 时 decision 必须存在
+        if ((status == ApprovalStatus.APPROVED || status == ApprovalStatus.REJECTED)
+                && decision == null) {
+            throw new IllegalArgumentException(
+                    "decision must not be null when status is " + status);
+        }
+        // decision 的 approvalId 和 status 必须与 PendingApproval 一致
+        if (decision != null) {
+            if (!decision.approvalId().equals(payload.approvalId())) {
+                throw new IllegalArgumentException(
+                        "decision.approvalId must match payload.approvalId");
+            }
+            if (decision.status() != status) {
+                throw new IllegalArgumentException(
+                        "decision.status must match PendingApproval status");
+            }
+        }
+    }
+
+    /**
+     * 便捷方法：获取 approvalId。
+     */
+    public String approvalId() {
+        return payload.approvalId();
+    }
+
+    /**
+     * 便捷方法：获取 runId。
+     */
+    public String runId() {
+        return payload.runId();
+    }
+
+    /**
+     * 便捷方法：获取 threadId。
+     */
+    public String threadId() {
+        return payload.threadId();
+    }
+
+    /**
+     * 便捷方法：获取 userId。
+     */
+    public String userId() {
+        return payload.userId();
     }
 }

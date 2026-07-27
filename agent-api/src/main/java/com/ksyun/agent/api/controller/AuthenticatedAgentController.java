@@ -7,6 +7,7 @@ import com.ksyun.agent.application.agent.AuthenticatedAgentApplicationService;
 import com.ksyun.agent.application.agent.AuthenticatedAgentRunResult;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
+import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.security.UserSession;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
@@ -60,7 +61,10 @@ public class AuthenticatedAgentController {
 
         try {
             AuthenticatedAgentRunResult runResult = service.invoke(session, request.agentName(), request.message());
-            return ResponseEntity.ok(toResponse(runResult));
+            AgentInvokeResponse response = toResponse(runResult);
+
+            // SUSPENDED 正常返回 200，不映射为 500
+            return ResponseEntity.ok(response);
         } catch (AgentFrameworkException e) {
             return ResponseEntity.status(mapErrorToHttpStatus(e.getErrorCode()))
                     .body(Map.of("errorCode", e.getErrorCode().name(),
@@ -77,7 +81,8 @@ public class AuthenticatedAgentController {
                 runResult.result().content(),
                 runResult.result().errorCode(),
                 runResult.result().evidence(),
-                runResult.result().metadata()
+                runResult.result().metadata(),
+                runResult.result().status()
         );
     }
 

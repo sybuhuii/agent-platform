@@ -23,7 +23,10 @@ import static org.bsc.langgraph4j.action.AsyncNodeAction.node_async;
  * <p>
  * 只负责构图，不负责执行。
  * 图结构：START -> reason -> [条件路由]
- *   -> EXECUTE_TOOLS -> observe -> reason (循环)
+ *   -> EXECUTE_TOOLS -> [条件路由]
+ *     -> OBSERVE -> reason (循环)
+ *     -> SUSPEND -> END
+ *     -> FAILURE -> END
  *   -> COMPLETE -> END
  *   -> MAX_ITERATIONS_FALLBACK -> END
  *   -> SUSPEND -> END
@@ -39,6 +42,7 @@ public class ReactAgentGraphFactory {
     private final ReactFailureNode failureNode;
     private final NodeAction<ReactAgentState> suspendNode;
     private final ReactRouter router;
+    private final ReactToolExecutionRouter toolExecutionRouter;
 
     public ReactAgentGraphFactory(
             ReactReasonNode reasonNode,
@@ -48,7 +52,8 @@ public class ReactAgentGraphFactory {
             ReactMaxIterationsNode maxIterationsNode,
             ReactFailureNode failureNode,
             NodeAction<ReactAgentState> suspendNode,
-            ReactRouter router
+            ReactRouter router,
+            ReactToolExecutionRouter toolExecutionRouter
     ) {
         this.reasonNode = reasonNode;
         this.toolExecutionNode = toolExecutionNode;
@@ -58,6 +63,7 @@ public class ReactAgentGraphFactory {
         this.failureNode = failureNode;
         this.suspendNode = suspendNode;
         this.router = router;
+        this.toolExecutionRouter = toolExecutionRouter;
     }
 
     public CompiledGraph<ReactAgentState> buildGraph() {
@@ -85,8 +91,15 @@ public class ReactAgentGraphFactory {
                     SUSPEND, SUSPEND
             ));
 
-            // 循环边：execute_tools -> observe -> reason
-            graph.addEdge(EXECUTE_TOOLS, OBSERVE);
+            // 条件路由：execute_tools 后根据执行结果决定下一步
+            // 替代原来的固定边 EXECUTE_TOOLS -> OBSERVE
+            graph.addConditionalEdges(EXECUTE_TOOLS, edge_async(toolExecutionRouter), Map.of(
+                    OBSERVE, OBSERVE,
+                    SUSPEND, SUSPEND,
+                    FAILURE, FAILURE
+            ));
+
+            // 循环边：observe -> reason
             graph.addEdge(OBSERVE, REASON);
 
             // 终止边
@@ -118,7 +131,76 @@ public class ReactAgentGraphFactory {
                 Map.entry(FINAL_RESULT, Channels.base((oldVal, newVal) -> newVal)),
                 Map.entry(STOP_REASON, Channels.base((oldVal, newVal) -> newVal)),
                 Map.entry(FAILURE_MESSAGE, Channels.base((oldVal, newVal) -> newVal)),
-                Map.entry(FAILURE_ERROR_CODE, Channels.base((oldVal, newVal) -> newVal))
+                Map.entry(FAILURE_ERROR_CODE, Channels.base((oldVal, newVal) -> newVal)),
+                // Phase6 Batch2 新增 Channel
+                Map.entry(TOOL_EXECUTION_CURSOR, Channels.base((oldVal, newVal) -> newVal)),
+                Map.entry(TOOL_EXECUTION_BUFFER, Channels.base(ArrayList::new)),
+                Map.entry(PENDING_APPROVAL, Channels.base((oldVal, newVal) -> newVal)),
+                Map.entry(CHECKPOINT_ID, Channels.base((oldVal, newVal) -> newVal)),
+                Map.entry(RUN_STATUS, Channels.base((oldVal, newVal) -> newVal))
         );
+    }
+
+    /**
+     * 编译恢复专用图。
+     * <p>
+     * START 直连 execute_tools，不经过 reason。
+     * execute_tools 后条件路由与主图相同：OBSERVE / SUSPEND / FAILURE。
+     * OBSERVE 后进入 reason（恢复正常循环）。
+     * <p>
+     * 不用 LangGraph4j CheckpointSaver。使用 agent-core CheckpointStore。
+     * 恢复使用原 runId 和 threadId。恢复不重新进入首次 Reason。
+     *
+     * @return 恢复专用 CompiledGraph
+     */
+    public CompiledGraph<ReactAgentState> compileForResume() {
+        try {
+            StateGraph<ReactAgentState> graph = new StateGraph<>(buildChannels(), ReactAgentState::new);
+
+            // 注册恢复需要的节点
+            graph.addNode(EXECUTE_TOOLS, node_async(toolExecutionNode));
+            graph.addNode(OBSERVE, node_async(observeNode));
+            graph.addNode(REASON, node_async(reasonNode));
+            graph.addNode(COMPLETE, node_async(completeNode));
+            graph.addNode(MAX_ITERATIONS_FALLBACK, node_async(maxIterationsNode));
+            graph.addNode(FAILURE, node_async(failureNode));
+            graph.addNode(SUSPEND, node_async(suspendNode));
+
+            // 恢复入口：START 直连 execute_tools
+            graph.addEdge(StateGraph.START, EXECUTE_TOOLS);
+
+            // execute_tools 后条件路由
+            graph.addConditionalEdges(EXECUTE_TOOLS, edge_async(toolExecutionRouter), Map.of(
+                    OBSERVE, OBSERVE,
+                    SUSPEND, SUSPEND,
+                    FAILURE, FAILURE
+            ));
+
+            // 循环边：observe -> reason
+            graph.addEdge(OBSERVE, REASON);
+
+            // reason 后条件路由
+            graph.addConditionalEdges(REASON, edge_async(router), Map.of(
+                    EXECUTE_TOOLS, EXECUTE_TOOLS,
+                    COMPLETE, COMPLETE,
+                    MAX_ITERATIONS_FALLBACK, MAX_ITERATIONS_FALLBACK,
+                    FAILURE, FAILURE,
+                    SUSPEND, SUSPEND
+            ));
+
+            // 终止边
+            graph.addEdge(COMPLETE, StateGraph.END);
+            graph.addEdge(MAX_ITERATIONS_FALLBACK, StateGraph.END);
+            graph.addEdge(FAILURE, StateGraph.END);
+            graph.addEdge(SUSPEND, StateGraph.END);
+
+            return graph.compile();
+        } catch (GraphStateException e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INTERNAL_ERROR,
+                    "Failed to compile ReAct resume graph",
+                    e
+            );
+        }
     }
 }

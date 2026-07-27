@@ -17,13 +17,14 @@ import java.util.Set;
  * <p>
  * 受 agent.sample.enabled 属性控制。
  * 通过 RoleProvider 和 RoleProviderRegistrar 自动注册。
- * 不得在 bootstrap 启动类手工调用 RoleStore.save。
- * 不得创建明文 Sample 密码。不得创建 Sample Session。
- * 无模型配置时 Sample 角色仍可注册。
+ * <p>
  * ADMIN 全权限通过 tool:*:invoke 表达，不作为代码中的特殊绕过条件。
+ * ADMIN 的 tool:*:invoke 只通过 ACL，不能绕过 ToolApprovalInterceptor 审批。
+ * VISITOR 无 delete_demo_record 权限，ACL 必须拒绝，不创建 Checkpoint。
+ * VISITOR 有 list_demo_records 权限。
  */
 @Configuration
-@ConditionalOnProperty(name = "agent.sample.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "agent.sample.enabled", havingValue = "true")
 public class SampleSecurityConfiguration {
 
     @Bean
@@ -60,7 +61,8 @@ public class SampleSecurityConfiguration {
                     Set.of(
                             ToolPermissionCodes.invoke("calculator"),
                             ToolPermissionCodes.invoke("current_time"),
-                            ToolPermissionCodes.invoke("echo")
+                            ToolPermissionCodes.invoke("echo"),
+                            ToolPermissionCodes.invoke("list_demo_records")
                     )
             );
         }

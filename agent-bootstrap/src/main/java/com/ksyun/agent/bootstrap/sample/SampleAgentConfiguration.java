@@ -1,20 +1,32 @@
 package com.ksyun.agent.bootstrap.sample;
 
 import com.ksyun.agent.core.agent.AgentProvider;
+import com.ksyun.agent.core.sample.DemoRecordStore;
 import com.ksyun.agent.core.supervisor.SupervisorProvider;
+import com.ksyun.agent.core.tool.AgentTool;
+import com.ksyun.agent.core.tool.ToolProvider;
+import com.ksyun.agent.bootstrap.sample.tool.DeleteDemoRecordTool;
+import com.ksyun.agent.bootstrap.sample.tool.ListDemoRecordsTool;
+import com.ksyun.agent.infrastructure.sample.InMemoryDemoRecordStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
+
 /**
- * Sample Agent 和 Supervisor 装配配置。
+ * Sample Agent、Supervisor 和演示工具装配配置。
  * <p>
- * 通过已有 ProviderRegistrar 自动注册 Sample Agent 和 Supervisor。
- * 受 agent.sample.enabled 属性控制，matchIfMissing=true 便于开发阶段。
- * 不重复创建 AgentRegistry、SupervisorRegistry 或 Registrar。
+ * 通过已有 ProviderRegistrar 自动注册 Sample Agent、Supervisor 和工具。
+ * 受 agent.sample.enabled 属性控制。
+ * matchIfMissing 不得为 true，避免自动开启本批危险演示工具。
+ * <p>
+ * ADMIN 的 tool:*:invoke 只能通过 ACL，不能绕过审批。
+ * VISITOR 无 delete 权限时必须由 ACL 拒绝，不创建 Checkpoint。
+ * dev 通配权限可以到达审批，但不能绕过审批。
  */
 @Configuration
-@ConditionalOnProperty(name = "agent.sample.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "agent.sample.enabled", havingValue = "true")
 public class SampleAgentConfiguration {
 
     @Bean
@@ -25,5 +37,21 @@ public class SampleAgentConfiguration {
     @Bean
     public SupervisorProvider sampleSupervisorProvider() {
         return new SampleSupervisorProvider();
+    }
+
+    // ---- Phase6 Batch2 演示工具 ----
+
+    @Bean
+    public DemoRecordStore demoRecordStore() {
+        return new InMemoryDemoRecordStore();
+    }
+
+    @Bean
+    public ToolProvider sampleDemoToolProvider(DemoRecordStore demoRecordStore) {
+        List<AgentTool> tools = List.of(
+                new ListDemoRecordsTool(demoRecordStore),
+                new DeleteDemoRecordTool(demoRecordStore)
+        );
+        return new com.ksyun.agent.infrastructure.tool.builtin.BuiltinToolProvider(tools);
     }
 }
