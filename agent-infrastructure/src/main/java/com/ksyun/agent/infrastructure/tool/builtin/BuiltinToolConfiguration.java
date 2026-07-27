@@ -22,7 +22,8 @@ public class BuiltinToolConfiguration {
                 new CalculatorTool(),
                 new CurrentTimeTool(),
                 new EchoTool(),
-                new TextSearchTool()
+                new TextSearchTool(),
+                new FileDeleteTool()
         );
         return new BuiltinToolProvider(tools);
     }

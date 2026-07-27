@@ -55,7 +55,6 @@ application-local.properties
 *.keystore
 
 # --- KSCC 和本地 AI 工具 ---
-.kscc-prompts/
 .claude/settings.local.json
 .codex/
 

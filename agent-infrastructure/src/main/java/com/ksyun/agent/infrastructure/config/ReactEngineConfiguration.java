@@ -1,75 +1,87 @@
 package com.ksyun.agent.infrastructure.config;
 
 import com.ksyun.agent.application.react.ReactDevApplicationService;
+import com.ksyun.agent.core.tool.AgentTool;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.react.DefaultReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentGraphFactory;
 import com.ksyun.agent.runtime.react.ReactExecutionValidator;
 import com.ksyun.agent.runtime.react.ReactRouter;
-import com.ksyun.agent.runtime.react.node.DefaultReactCompleteNode;
-import com.ksyun.agent.runtime.react.node.DefaultReactFailureNode;
-import com.ksyun.agent.runtime.react.node.DefaultReactMaxIterationsNode;
-import com.ksyun.agent.runtime.react.node.DefaultReactObserveNode;
-import com.ksyun.agent.runtime.react.node.DefaultReactReasonNode;
-import com.ksyun.agent.runtime.react.node.DefaultReactToolExecutionNode;
+import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointService;
+import com.ksyun.agent.runtime.react.node.DefaultReactSuspendNode;
+import com.ksyun.agent.runtime.run.RunIdGenerator;
+import com.ksyun.agent.runtime.registry.AgentRegistry;
+import com.ksyun.agent.runtime.registry.ToolRegistry;
+import com.ksyun.agent.core.store.CheckpointStore;
+import org.bsc.langgraph4j.action.NodeAction;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.context.annotation.Bean;
+
 import com.ksyun.agent.runtime.react.node.ReactCompleteNode;
 import com.ksyun.agent.runtime.react.node.ReactFailureNode;
 import com.ksyun.agent.runtime.react.node.ReactMaxIterationsNode;
 import com.ksyun.agent.runtime.react.node.ReactObserveNode;
 import com.ksyun.agent.runtime.react.node.ReactReasonNode;
 import com.ksyun.agent.runtime.react.node.ReactToolExecutionNode;
-import com.ksyun.agent.runtime.registry.AgentRegistry;
-import com.ksyun.agent.runtime.registry.ToolRegistry;
-import com.ksyun.agent.runtime.run.RunIdGenerator;
-import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
-import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.context.annotation.Bean;
+import com.ksyun.agent.runtime.react.ReactAgentState;
 
 /**
- * ReAct 引擎 Bean 装配。
+ * ReAct 引擎 Spring 装配配置。
  * <p>
- * 条件：
- * - 所有 ReAct 引擎相关 Bean 仅在 ModelInvocationGateway 存在时创建。
- * - 无模型配置时应用仍能正常启动，不注册 ReAct Bean。
- * - 不创建 Fake ModelClient 或伪造 ModelInvocationGateway。
- * - 不在 bootstrap 启动类中手工 new 组件。
- * - 不产生 Bean 循环依赖。
+ * 仅当 ModelInvocationGateway Bean 存在时才装配（需要模型配置）。
  */
 @AutoConfiguration(after = SpringAiModelConfiguration.class)
 @ConditionalOnBean(ModelInvocationGateway.class)
 public class ReactEngineConfiguration {
 
     @Bean
-    public ReactReasonNode reactReasonNode(ModelInvocationGateway modelInvocationGateway,
-                                             ToolRegistry toolRegistry) {
-        return new DefaultReactReasonNode(modelInvocationGateway, toolRegistry);
+    public ReactExecutionValidator reactExecutionValidator(AgentRegistry agentRegistry) {
+        return new ReactExecutionValidator(agentRegistry);
+    }
+
+    // ---- ReAct 节点 ----
+
+    @Bean
+    public ReactReasonNode reactReasonNode(ModelInvocationGateway modelGateway, ToolRegistry toolRegistry) {
+        return new com.ksyun.agent.runtime.react.node.DefaultReactReasonNode(modelGateway, toolRegistry);
     }
 
     @Bean
-    public ReactToolExecutionNode reactToolExecutionNode(ToolInvocationGateway toolInvocationGateway) {
-        return new DefaultReactToolExecutionNode(toolInvocationGateway);
+    public ReactToolExecutionNode reactToolExecutionNode(com.ksyun.agent.runtime.tool.ToolInvocationGateway toolGateway) {
+        return new com.ksyun.agent.runtime.react.node.DefaultReactToolExecutionNode(toolGateway);
     }
 
     @Bean
     public ReactObserveNode reactObserveNode() {
-        return new DefaultReactObserveNode();
+        return new com.ksyun.agent.runtime.react.node.DefaultReactObserveNode();
     }
 
     @Bean
     public ReactCompleteNode reactCompleteNode() {
-        return new DefaultReactCompleteNode();
+        return new com.ksyun.agent.runtime.react.node.DefaultReactCompleteNode();
     }
 
     @Bean
     public ReactMaxIterationsNode reactMaxIterationsNode() {
-        return new DefaultReactMaxIterationsNode();
+        return new com.ksyun.agent.runtime.react.node.DefaultReactMaxIterationsNode();
     }
 
     @Bean
     public ReactFailureNode reactFailureNode() {
-        return new DefaultReactFailureNode();
+        return new com.ksyun.agent.runtime.react.node.DefaultReactFailureNode();
+    }
+
+    @Bean
+    public ReactCheckpointService reactCheckpointService(CheckpointStore checkpointStore) {
+        return new ReactCheckpointService(checkpointStore);
+    }
+
+    @Bean
+    public NodeAction<ReactAgentState> reactSuspendNode(ReactCheckpointService checkpointService) {
+        return new DefaultReactSuspendNode(checkpointService);
     }
 
     @Bean
@@ -77,10 +89,7 @@ public class ReactEngineConfiguration {
         return new ReactRouter();
     }
 
-    @Bean
-    public ReactExecutionValidator reactExecutionValidator() {
-        return new ReactExecutionValidator();
-    }
+    // ---- 图工厂和引擎 ----
 
     @Bean
     public ReactAgentGraphFactory reactAgentGraphFactory(
@@ -90,17 +99,18 @@ public class ReactEngineConfiguration {
             ReactCompleteNode completeNode,
             ReactMaxIterationsNode maxIterationsNode,
             ReactFailureNode failureNode,
+            NodeAction<ReactAgentState> suspendNode,
             ReactRouter router
     ) {
         return new ReactAgentGraphFactory(
                 reasonNode, toolExecutionNode, observeNode,
-                completeNode, maxIterationsNode, failureNode, router
+                completeNode, maxIterationsNode, failureNode,
+                suspendNode, router
         );
     }
 
     @Bean
-    public ReactAgentEngine reactAgentEngine(ReactExecutionValidator validator,
-                                              ReactAgentGraphFactory graphFactory) {
+    public ReactAgentEngine reactAgentEngine(ReactExecutionValidator validator, ReactAgentGraphFactory graphFactory) {
         return new DefaultReactAgentEngine(validator, graphFactory);
     }
 

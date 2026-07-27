@@ -8,6 +8,7 @@ import com.ksyun.agent.core.tool.ToolInvocation;
 import com.ksyun.agent.core.tool.ToolResult;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
+import com.ksyun.agent.runtime.react.ReactStateKeys;
 import com.ksyun.agent.runtime.react.ToolExecutionTrace;
 import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
 import org.slf4j.Logger;
@@ -21,10 +22,15 @@ import java.util.Map;
 import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
 
 /**
- * 默认工具执行节点实现。
+ * ReAct 工具执行节点默认实现。
  * <p>
- * 执行 pendingToolCalls 中的工具调用。
- * 纯 Java 实现，不添加 Spring 注解。
+ * 逐个调用 ToolInvocationGateway 执行 pendingToolCalls，
+ * 收集 ToolResult 和 ToolExecutionTrace。
+ * <p>
+ * 中断信号处理：
+ * - APPROVAL_REQUIRED 异常 → STOP_REASON=SUSPENDED（暂停等待审批）
+ * - 其他 AgentFrameworkException → STOP_REASON=TOOL_ERROR
+ * - 通用 Exception → STOP_REASON=TOOL_ERROR + TOOL_EXECUTION_FAILED
  */
 public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
 
@@ -37,15 +43,16 @@ public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
     }
 
     @Override
-    public Map<String, Object> apply(ReactAgentState state) throws Exception {
+    public Map<String, Object> apply(ReactAgentState state) {
         List<ToolCall> pendingToolCalls = getPendingToolCalls(state);
         RunContext runContext = getRunContext(state);
 
-        if (pendingToolCalls.isEmpty()) {
+        if (pendingToolCalls == null || pendingToolCalls.isEmpty()) {
+            log.warn("No pending tool calls to execute");
             return Map.of(
                     STOP_REASON, ReactStopReason.INVALID_STATE,
-                    FAILURE_ERROR_CODE, AgentErrorCode.INTERNAL_ERROR,
-                    FAILURE_MESSAGE, "No pending tool calls to execute"
+                    FAILURE_MESSAGE, "No pending tool calls to execute",
+                    FAILURE_ERROR_CODE, AgentErrorCode.INVALID_STATE
             );
         }
 
@@ -58,17 +65,28 @@ public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
             try {
                 result = toolGateway.invoke(new ToolInvocation(toolCall, runContext));
             } catch (AgentFrameworkException e) {
-                // 框架内部异常，无法形成有效 ToolResult
+                // 审批中断信号：识别 APPROVAL_REQUIRED，设置 SUSPENDED
+                if (e.getErrorCode() == AgentErrorCode.APPROVAL_REQUIRED) {
+                    log.info("Tool execution suspended for approval: toolName={}, runId={}",
+                            toolCall.name(), runContext.runId());
+                    return Map.of(
+                            STOP_REASON, ReactStopReason.SUSPENDED,
+                            FAILURE_ERROR_CODE, AgentErrorCode.APPROVAL_REQUIRED,
+                            FAILURE_MESSAGE, e.getMessage(),
+                            LATEST_TOOL_RESULTS, List.copyOf(results)
+                    );
+                }
+                // 其他框架内部异常，无法形成有效 ToolResult
                 log.error("Tool execution framework error: toolName={}, runId={}, errorCode={}",
                         toolCall.name(), runContext.runId(), e.getErrorCode());
                 return Map.of(
                         STOP_REASON, ReactStopReason.TOOL_ERROR,
                         FAILURE_ERROR_CODE, e.getErrorCode(),
-                        FAILURE_MESSAGE, "Tool execution failed",
+                        FAILURE_MESSAGE, e.getMessage(),
                         LATEST_TOOL_RESULTS, List.copyOf(results)
                 );
             } catch (Exception e) {
-                log.error("Tool execution unexpected error: toolName={}, runId={}",
+                log.error("Unexpected tool execution error: toolName={}, runId={}",
                         toolCall.name(), runContext.runId(), e);
                 return Map.of(
                         STOP_REASON, ReactStopReason.TOOL_ERROR,
@@ -80,7 +98,6 @@ public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
 
             Instant finishedAt = Instant.now();
             results.add(result);
-
             traces.add(new ToolExecutionTrace(
                     toolCall.id(),
                     toolCall.name(),

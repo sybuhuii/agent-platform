@@ -12,62 +12,47 @@ import static com.ksyun.agent.runtime.react.ReactNodeNames.*;
 import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
 
 /**
- * ReAct 路由器，根据当前状态决定 Reason 后的路由目标。
- * <p>
- * 纯 Java 实现，不调用模型、不执行工具、不修改业务数据。
- * 实现 LangGraph4j {@link EdgeAction}，由 GraphFactory 通过 edge_async 注册。
- * <p>
- * 路由优先级：
- * 1. 存在 failureErrorCode，或 stopReason 属于 MODEL_ERROR/TOOL_ERROR/INVALID_STATE → FAIL
- * 2. stopReason=MODEL_COMPLETED 且 pendingToolCalls 为空 → COMPLETE
- *    （即使 iteration 刚好等于 maxIterations，也允许正常完成）
- * 3. pendingToolCalls 非空且 iteration >= maxIterations → MAX_ITERATIONS
- *    （不得执行这些新 ToolCall）
- * 4. pendingToolCalls 非空 → EXECUTE_TOOLS
- * 5. iteration >= maxIterations → MAX_ITERATIONS
- * 6. 其他无法解释的状态 → FAIL
+ * ReAct 路由器。
  */
 public class ReactRouter implements EdgeAction<ReactAgentState> {
 
     @Override
-    public String apply(ReactAgentState state) throws Exception {
+    public String apply(ReactAgentState state) {
         ReactStopReason stopReason = getStopReason(state);
         String failureMessage = getFailureMessage(state);
         AgentErrorCode failureErrorCode = getFailureErrorCode(state);
+        List<ToolCall> pendingToolCalls = getPendingToolCalls(state);
+        AgentDefinition definition = getAgentDefinition(state);
+        Integer iteration = getIteration(state);
 
-        // 优先级1：存在 failureErrorCode，或 stopReason 属于失败类，或 failureMessage 存在
-        if (failureErrorCode != null || isFailureStopReason(stopReason)
-                || (failureMessage != null && !failureMessage.isBlank())) {
+        // 1. 审批中断
+        if (stopReason == ReactStopReason.SUSPENDED) {
+            return SUSPEND;
+        }
+
+        // 2. 失败状态
+        if (failureErrorCode != null || isFailureStopReason(stopReason) || failureMessage != null) {
             return FAILURE;
         }
 
-        List<ToolCall> pendingToolCalls = getPendingToolCalls(state);
-        AgentDefinition definition = getAgentDefinition(state);
-        int iteration = getIteration(state);
-
-        // 优先级2：stopReason=MODEL_COMPLETED 且 pendingToolCalls 为空 → COMPLETE
-        if (stopReason == ReactStopReason.MODEL_COMPLETED
-                && (pendingToolCalls == null || pendingToolCalls.isEmpty())) {
+        // 3. 模型完成
+        if (stopReason == ReactStopReason.MODEL_COMPLETED && (pendingToolCalls == null || pendingToolCalls.isEmpty())) {
             return COMPLETE;
         }
 
-        // 优先级3：pendingToolCalls 非空且 iteration >= maxIterations → MAX_ITERATIONS
-        if (pendingToolCalls != null && !pendingToolCalls.isEmpty()
-                && iteration >= definition.maxIterations()) {
-            return MAX_ITERATIONS_FALLBACK;
-        }
-
-        // 优先级4：pendingToolCalls 非空 → EXECUTE_TOOLS
+        // 4. 有工具调用
         if (pendingToolCalls != null && !pendingToolCalls.isEmpty()) {
+            if (definition != null && iteration != null && iteration >= definition.maxIterations()) {
+                return MAX_ITERATIONS_FALLBACK;
+            }
             return EXECUTE_TOOLS;
         }
 
-        // 优先级5：iteration >= maxIterations → MAX_ITERATIONS
-        if (iteration >= definition.maxIterations()) {
+        // 5. 无工具调用但达到最大迭代
+        if (definition != null && iteration != null && iteration >= definition.maxIterations()) {
             return MAX_ITERATIONS_FALLBACK;
         }
 
-        // 优先级6：其他无法解释的状态 → FAIL
         return FAILURE;
     }
 

@@ -26,6 +26,11 @@ import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
 import com.ksyun.agent.runtime.tool.ToolAccessControlInterceptor;
 import com.ksyun.agent.runtime.tool.authorization.DefaultToolPermissionEvaluator;
 import com.ksyun.agent.runtime.tool.authorization.ToolPermissionEvaluator;
+import com.ksyun.agent.runtime.tool.approval.DangerousToolApprovalPolicy;
+import com.ksyun.agent.runtime.tool.approval.DefaultDangerousToolApprovalPolicy;
+import com.ksyun.agent.runtime.tool.approval.ToolApprovalGateInterceptor;
+import com.ksyun.agent.core.store.CheckpointStore;
+import com.ksyun.agent.infrastructure.store.InMemoryCheckpointStore;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -145,5 +150,24 @@ public class AgentFrameworkAutoConfiguration {
     public com.ksyun.agent.runtime.supervisor.SupervisorExecutionValidator supervisorExecutionValidator(
             AgentRegistry agentRegistry) {
         return new com.ksyun.agent.runtime.supervisor.SupervisorExecutionValidator(agentRegistry);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CheckpointStore checkpointStore() {
+        return new InMemoryCheckpointStore();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public DangerousToolApprovalPolicy dangerousToolApprovalPolicy() {
+        return new DefaultDangerousToolApprovalPolicy();
+    }
+
+    @Bean
+    public ToolApprovalGateInterceptor toolApprovalGateInterceptor(
+            ToolRegistry toolRegistry,
+            DangerousToolApprovalPolicy approvalPolicy) {
+        return new ToolApprovalGateInterceptor(toolRegistry, approvalPolicy);
     }
 }

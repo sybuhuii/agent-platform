@@ -19,6 +19,9 @@ public enum ReactStopReason {
     /** 工具执行出错 */
     TOOL_ERROR,
 
+    /** 危险工具需要人工审批，ReAct 暂停等待 */
+    SUSPENDED,
+
     /** 状态非法或节点执行失败 */
     INVALID_STATE
 }
