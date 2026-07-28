@@ -32,6 +32,7 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
                         "/api/supervisor/**",
                         "/api/admin/**",
                         "/api/hitl/**",
+                        "/api/context/**",
                         "/api/auth/me",
                         "/api/auth/logout",
                         "/api/auth/session"

@@ -1,10 +1,12 @@
 package com.ksyun.agent.api.controller;
 
 import com.ksyun.agent.api.dto.AgentInfoResponse;
+import com.ksyun.agent.api.dto.ContextCapabilityResponse;
 import com.ksyun.agent.api.dto.HealthResponse;
 import com.ksyun.agent.api.dto.SupervisorInfoResponse;
 import com.ksyun.agent.api.dto.ToolInfoResponse;
 import com.ksyun.agent.application.framework.FrameworkQueryService;
+import com.ksyun.agent.application.framework.FrameworkQueryService.ContextCapabilityInfo;
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import com.ksyun.agent.core.tool.ToolDefinition;
@@ -53,13 +55,14 @@ public class FrameworkController {
                 .toList();
     }
 
+    @GetMapping("/context")
+    public ContextCapabilityResponse getContextCapability() {
+        ContextCapabilityInfo info = frameworkQueryService.getContextCapability();
+        return ContextCapabilityResponse.from(info);
+    }
+
     private AgentInfoResponse toAgentInfo(AgentDefinition def) {
-        return new AgentInfoResponse(
-                def.name(),
-                def.description(),
-                def.allowedTools(),
-                def.maxIterations()
-        );
+        return AgentInfoResponse.from(def);
     }
 
     private ToolInfoResponse toToolInfo(ToolDefinition def) {

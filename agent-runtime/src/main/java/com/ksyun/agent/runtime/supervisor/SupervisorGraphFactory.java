@@ -100,7 +100,11 @@ public class SupervisorGraphFactory {
 
                 entry(SUPERVISOR_DEFINITION, Channels.base((oldVal, newVal) -> newVal)),
                 entry(ROOT_TASK, Channels.base((oldVal, newVal) -> newVal)),
-                entry(RUN_CONTEXT, Channels.base((oldVal, newVal) -> newVal))
+                entry(RUN_CONTEXT, Channels.base((oldVal, newVal) -> newVal)),
+
+                // Phase7 Batch4 上下文窗口 Channel（覆盖语义）
+                entry(CONTEXT_WINDOW_SNAPSHOT, Channels.base((oldVal, newVal) -> newVal)),
+                entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal))
         );
     }
 

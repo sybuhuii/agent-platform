@@ -9,5 +9,5 @@ import java.io.Serializable;
  */
 public sealed interface AgentMessage
         extends Serializable
-        permits SystemAgentMessage, UserAgentMessage, AssistantAgentMessage, ToolAgentMessage {
+        permits SystemAgentMessage, UserAgentMessage, AssistantAgentMessage, ToolAgentMessage, SummaryAgentMessage {
 }

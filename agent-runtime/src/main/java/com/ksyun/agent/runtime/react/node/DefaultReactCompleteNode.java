@@ -2,9 +2,11 @@ package com.ksyun.agent.runtime.react.node;
 
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.AssistantAgentMessage;
 import com.ksyun.agent.core.tool.ToolCall;
+import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
 import org.slf4j.Logger;
@@ -85,6 +87,10 @@ public class DefaultReactCompleteNode implements ReactCompleteNode {
                 "toolExecutionCount", toolTraces.size(),
                 "stopReason", stopReason.name()
         );
+
+        // 合并上下文处理追踪到 metadata
+        ContextProcessingTrace trace = getLatestContextTrace(state);
+        metadata = ContextMetadataHelper.mergeContextMetadata(metadata, trace);
 
         AgentResult result = new AgentResult(
                 definition.name(),

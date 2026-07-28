@@ -2,14 +2,16 @@ package com.ksyun.agent.runtime.react.node;
 
 import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.approval.PendingApproval;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.run.RunContext;
+import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
-import com.ksyun.agent.runtime.react.ReactStateKeys;
 import org.bsc.langgraph4j.action.NodeAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
@@ -48,24 +50,40 @@ public class DefaultReactSuspendNode implements NodeAction<ReactAgentState> {
 
         String agentName = definition != null ? definition.name() : "unknown";
 
+        // 合并上下文处理追踪到 metadata
+        ContextProcessingTrace trace = getLatestContextTrace(state);
+
         // 构造挂起的 AgentResult
         AgentResult suspendedResult;
         if (approval != null) {
-            suspendedResult = AgentResult.suspended(
+            Map<String, Object> baseMetadata = Map.of(
+                    "approvalId", approval.approvalId(),
+                    "operationName", approval.payload().operationName(),
+                    "riskLevel", approval.payload().riskLevel().name(),
+                    "requestedAt", approval.payload().requestedAt().toString()
+            );
+            Map<String, Object> metadata = ContextMetadataHelper.mergeContextMetadata(baseMetadata, trace);
+
+            suspendedResult = new AgentResult(
                     agentName,
-                    approval.approvalId(),
-                    approval.payload().operationName(),
-                    approval.payload().riskLevel().name(),
-                    approval.payload().requestedAt().toString()
+                    false,
+                    "运行已暂停，等待人工审批。",
+                    java.util.List.of(),
+                    metadata,
+                    "APPROVAL_REQUIRED",
+                    com.ksyun.agent.core.run.RunStatus.SUSPENDED
             );
         } else {
+            Map<String, Object> metadata = ContextMetadataHelper.mergeContextMetadata(Map.of(), trace);
             // 没有 approval 信息时的兜底
-            suspendedResult = AgentResult.suspended(
+            suspendedResult = new AgentResult(
                     agentName,
-                    "unknown",
-                    "unknown",
-                    "HIGH",
-                    "unknown"
+                    false,
+                    "运行已暂停，等待人工审批。",
+                    java.util.List.of(),
+                    metadata,
+                    "APPROVAL_REQUIRED",
+                    com.ksyun.agent.core.run.RunStatus.SUSPENDED
             );
         }
 

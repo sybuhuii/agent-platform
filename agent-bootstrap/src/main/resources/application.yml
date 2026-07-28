@@ -29,6 +29,22 @@ agent:
   auth:
     enabled: ${AGENT_AUTH_ENABLED:true}
 
+  context:
+    enabled: ${AGENT_CONTEXT_ENABLED:true}
+    message-count-trimming-enabled: ${AGENT_CONTEXT_MESSAGE_COUNT_TRIMMING:true}
+    max-messages: ${AGENT_CONTEXT_MAX_MESSAGES:20}
+    token-trimming-enabled: ${AGENT_CONTEXT_TOKEN_TRIMMING:true}
+    max-context-tokens: ${AGENT_CONTEXT_MAX_TOKENS:8192}
+    reserved-output-tokens: ${AGENT_CONTEXT_RESERVED_OUTPUT:1024}
+    reserved-protocol-tokens: ${AGENT_CONTEXT_RESERVED_PROTOCOL:256}
+    safety-margin-tokens: ${AGENT_CONTEXT_SAFETY_MARGIN:128}
+    summary:
+      enabled: ${AGENT_CONTEXT_SUMMARY_ENABLED:true}
+      trigger-ratio: ${AGENT_CONTEXT_SUMMARY_TRIGGER_RATIO:0.80}
+      min-source-tokens: ${AGENT_CONTEXT_SUMMARY_MIN_SOURCE_TOKENS:512}
+      max-summary-tokens: ${AGENT_CONTEXT_SUMMARY_MAX_TOKENS:512}
+      recent-groups-to-preserve: ${AGENT_CONTEXT_SUMMARY_RECENT_GROUPS:4}
+
   security:
     session:
       ttl: ${AGENT_SESSION_TTL:PT8H}

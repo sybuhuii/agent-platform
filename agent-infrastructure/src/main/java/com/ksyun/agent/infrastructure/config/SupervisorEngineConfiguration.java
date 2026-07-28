@@ -51,8 +51,10 @@ public class SupervisorEngineConfiguration {
             ModelInvocationGateway modelInvocationGateway,
             SupervisorDecisionParser decisionParser,
             AgentRegistry agentRegistry,
-            RunIdGenerator runIdGenerator) {
-        return new DefaultSupervisorReasonNode(modelInvocationGateway, decisionParser, agentRegistry, runIdGenerator);
+            RunIdGenerator runIdGenerator,
+            com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager) {
+        return new DefaultSupervisorReasonNode(modelInvocationGateway, decisionParser,
+                agentRegistry, runIdGenerator, contextWindowManager);
     }
 
     @Bean

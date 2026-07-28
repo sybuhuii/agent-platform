@@ -129,8 +129,10 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnBean(ModelInvocationGateway.class)
-    public ReactReasonNode reactReasonNode(ModelInvocationGateway modelGateway, ToolRegistry toolRegistry) {
-        return new com.ksyun.agent.runtime.react.node.DefaultReactReasonNode(modelGateway, toolRegistry);
+    public ReactReasonNode reactReasonNode(ModelInvocationGateway modelGateway,
+                                            ToolRegistry toolRegistry,
+                                            com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager) {
+        return new com.ksyun.agent.runtime.react.node.DefaultReactReasonNode(modelGateway, toolRegistry, contextWindowManager);
     }
 
     @Bean

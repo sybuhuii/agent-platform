@@ -1,6 +1,7 @@
 package com.ksyun.agent.runtime.react.node;
 
 import com.ksyun.agent.core.agent.AgentDefinition;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
@@ -10,6 +11,9 @@ import com.ksyun.agent.core.model.ModelResponse;
 import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.tool.ToolCall;
 import com.ksyun.agent.core.tool.ToolDefinition;
+import com.ksyun.agent.runtime.context.ContextWindowManager;
+import com.ksyun.agent.runtime.context.ContextWindowSnapshot;
+import com.ksyun.agent.runtime.context.ContextWindowUpdate;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
@@ -21,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
 
@@ -28,6 +33,8 @@ import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
  * 默认 Reason 节点实现。
  * <p>
  * 调用模型，决定是否需要工具调用。
+ * 通过 ContextWindowManager 管理上下文窗口，模型只接收压缩后的消息。
+ * 完整历史仍保存在 state.messages 中，不被裁剪结果覆盖。
  * 纯 Java 实现，不添加 Spring 注解。
  */
 public class DefaultReactReasonNode implements ReactReasonNode {
@@ -36,11 +43,14 @@ public class DefaultReactReasonNode implements ReactReasonNode {
 
     private final ModelInvocationGateway modelGateway;
     private final ToolRegistry toolRegistry;
+    private final ContextWindowManager contextWindowManager;
 
     public DefaultReactReasonNode(ModelInvocationGateway modelGateway,
-                                   ToolRegistry toolRegistry) {
+                                   ToolRegistry toolRegistry,
+                                   ContextWindowManager contextWindowManager) {
         this.modelGateway = modelGateway;
         this.toolRegistry = toolRegistry;
+        this.contextWindowManager = contextWindowManager;
     }
 
     @Override
@@ -58,11 +68,34 @@ public class DefaultReactReasonNode implements ReactReasonNode {
             );
         }
 
+        // 读取完整 state.messages
+        List<AgentMessage> fullHistory = getMessages(state);
+
+        // 读取可选 ContextWindowSnapshot
+        ContextWindowSnapshot previousSnapshot = getContextWindowSnapshot(state);
+        Optional<ContextWindowSnapshot> previousOpt = Optional.ofNullable(previousSnapshot);
+
+        // 确定发送给模型的消息
+        List<AgentMessage> modelMessages;
+        ContextWindowSnapshot newSnapshot = null;
+        ContextProcessingTrace newTrace = null;
+
+        Optional<ContextWindowUpdate> windowUpdate = contextWindowManager.update(fullHistory, previousOpt);
+        if (windowUpdate.isPresent()) {
+            ContextWindowUpdate update = windowUpdate.get();
+            modelMessages = update.modelMessages();
+            newSnapshot = update.snapshot();
+            newTrace = update.trace();
+        } else {
+            // 上下文关闭，使用完整消息
+            modelMessages = fullHistory;
+        }
+
         // 构造本轮允许的工具定义
         List<ToolDefinition> tools = resolveAllowedTools(definition);
 
-        // 构造 ModelRequest
-        ModelRequest request = new ModelRequest(getMessages(state), tools, Map.of());
+        // 使用 modelMessages 构造 ModelRequest
+        ModelRequest request = new ModelRequest(modelMessages, tools, Map.of());
 
         // 调用模型
         ModelResponse response;
@@ -71,29 +104,38 @@ public class DefaultReactReasonNode implements ReactReasonNode {
         } catch (AgentFrameworkException e) {
             log.error("Reason node model invocation failed: runId={}, agent={}, iteration={}, errorCode={}",
                     runContext.runId(), definition.name(), iteration, e.getErrorCode());
-            return Map.of(
+            Map<String, Object> errorResult = Map.of(
                     STOP_REASON, ReactStopReason.MODEL_ERROR,
                     FAILURE_ERROR_CODE, e.getErrorCode(),
                     FAILURE_MESSAGE, "Model invocation failed",
                     PENDING_TOOL_CALLS, List.of(),
                     LATEST_TOOL_RESULTS, List.of()
             );
+            // 即使失败也更新窗口快照和追踪（如果存在）
+            if (newSnapshot != null) {
+                return mergeContextState(errorResult, newSnapshot, newTrace);
+            }
+            return errorResult;
         } catch (Exception e) {
             log.error("Reason node model invocation failed: runId={}, agent={}, iteration={}",
                     runContext.runId(), definition.name(), iteration, e);
-            return Map.of(
+            Map<String, Object> errorResult = Map.of(
                     STOP_REASON, ReactStopReason.MODEL_ERROR,
                     FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED,
                     FAILURE_MESSAGE, "Model invocation failed",
                     PENDING_TOOL_CALLS, List.of(),
                     LATEST_TOOL_RESULTS, List.of()
             );
+            if (newSnapshot != null) {
+                return mergeContextState(errorResult, newSnapshot, newTrace);
+            }
+            return errorResult;
         }
 
         AssistantAgentMessage assistantMsg = response.message();
         List<ToolCall> toolCalls = assistantMsg.toolCalls();
 
-        // 追加 assistant 消息到 messages（追加语义）
+        // 追加 assistant 消息到 messages（追加语义），注意是追加到完整历史
         List<AgentMessage> newMessages = new ArrayList<>();
         newMessages.add(assistantMsg);
 
@@ -101,38 +143,62 @@ public class DefaultReactReasonNode implements ReactReasonNode {
 
         if (toolCalls != null && !toolCalls.isEmpty()) {
             // 模型返回了 ToolCall，不设置 MODEL_COMPLETED，由 Router 决定走向
-            return Map.of(
-                    MESSAGES, newMessages,
-                    PENDING_TOOL_CALLS, List.copyOf(toolCalls),
-                    LATEST_TOOL_RESULTS, List.of(),
-                    ITERATION, newIteration
-            );
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put(MESSAGES, newMessages);
+            result.put(PENDING_TOOL_CALLS, List.copyOf(toolCalls));
+            result.put(LATEST_TOOL_RESULTS, List.of());
+            result.put(ITERATION, newIteration);
+            if (newSnapshot != null) {
+                result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
+                result.put(LATEST_CONTEXT_TRACE, newTrace);
+            }
+            return result;
         }
 
         // 模型未返回 ToolCall
         String content = assistantMsg.content();
         if (content != null && !content.isBlank()) {
-            return Map.of(
-                    MESSAGES, newMessages,
-                    PENDING_TOOL_CALLS, List.of(),
-                    LATEST_TOOL_RESULTS, List.of(),
-                    ITERATION, newIteration,
-                    STOP_REASON, ReactStopReason.MODEL_COMPLETED
-            );
+            Map<String, Object> result = new java.util.HashMap<>();
+            result.put(MESSAGES, newMessages);
+            result.put(PENDING_TOOL_CALLS, List.of());
+            result.put(LATEST_TOOL_RESULTS, List.of());
+            result.put(ITERATION, newIteration);
+            result.put(STOP_REASON, ReactStopReason.MODEL_COMPLETED);
+            if (newSnapshot != null) {
+                result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
+                result.put(LATEST_CONTEXT_TRACE, newTrace);
+            }
+            return result;
         }
 
         // 模型既无有效文本也无 ToolCall
         log.error("Reason node received empty model response: runId={}, agent={}, iteration={}",
                 runContext.runId(), definition.name(), iteration);
-        return Map.of(
-                MESSAGES, newMessages,
-                PENDING_TOOL_CALLS, List.of(),
-                LATEST_TOOL_RESULTS, List.of(),
-                ITERATION, newIteration,
-                STOP_REASON, ReactStopReason.MODEL_ERROR,
-                FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED,
-                FAILURE_MESSAGE, "Model returned empty response"
-        );
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put(MESSAGES, newMessages);
+        result.put(PENDING_TOOL_CALLS, List.of());
+        result.put(LATEST_TOOL_RESULTS, List.of());
+        result.put(ITERATION, newIteration);
+        result.put(STOP_REASON, ReactStopReason.MODEL_ERROR);
+        result.put(FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED);
+        result.put(FAILURE_MESSAGE, "Model returned empty response");
+        if (newSnapshot != null) {
+            result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
+            result.put(LATEST_CONTEXT_TRACE, newTrace);
+        }
+        return result;
+    }
+
+    /**
+     * 将窗口状态合并到结果 Map 中。
+     */
+    private Map<String, Object> mergeContextState(Map<String, Object> base,
+                                                   ContextWindowSnapshot snapshot,
+                                                   ContextProcessingTrace trace) {
+        Map<String, Object> result = new java.util.HashMap<>(base);
+        result.put(CONTEXT_WINDOW_SNAPSHOT, snapshot);
+        result.put(LATEST_CONTEXT_TRACE, trace);
+        return result;
     }
 
     private List<ToolDefinition> resolveAllowedTools(AgentDefinition definition) {
@@ -142,7 +208,6 @@ public class DefaultReactReasonNode implements ReactReasonNode {
         List<ToolDefinition> tools = new ArrayList<>();
         for (String toolName : definition.allowedTools()) {
             if (!toolRegistry.contains(toolName)) {
-                // 工具不存在，记录并跳过，但标记失败
                 log.error("Allowed tool not found in registry: toolName={}", toolName);
                 throw new AgentFrameworkException(
                         AgentErrorCode.TOOL_NOT_FOUND,

@@ -3,6 +3,9 @@ package com.ksyun.agent.infrastructure.config;
 import com.ksyun.agent.application.framework.FrameworkQueryService;
 import com.ksyun.agent.core.agent.AgentProvider;
 import com.ksyun.agent.core.approval.ApprovalIdGenerator;
+import com.ksyun.agent.core.context.ContextSummarizer;
+import com.ksyun.agent.core.context.ContextSummaryOptions;
+import com.ksyun.agent.core.context.TokenCounter;
 import com.ksyun.agent.core.sanitizer.SensitiveValueSanitizer;
 import com.ksyun.agent.core.store.CheckpointIdGenerator;
 import com.ksyun.agent.core.store.CheckpointStore;
@@ -12,6 +15,19 @@ import com.ksyun.agent.infrastructure.approval.UuidApprovalIdGenerator;
 import com.ksyun.agent.infrastructure.sanitizer.DefaultSensitiveValueSanitizer;
 import com.ksyun.agent.infrastructure.store.InMemoryCheckpointStore;
 import com.ksyun.agent.infrastructure.store.UuidCheckpointIdGenerator;
+import com.ksyun.agent.runtime.context.ContextMessageGrouper;
+import com.ksyun.agent.runtime.context.ContextMessageHistoryValidator;
+import com.ksyun.agent.runtime.context.ContextProcessingPipeline;
+import com.ksyun.agent.runtime.context.ContextSummaryMerger;
+import com.ksyun.agent.runtime.context.ContextSummaryPromptBuilder;
+import com.ksyun.agent.runtime.context.ContextSummarySelector;
+import com.ksyun.agent.runtime.context.ContextSummaryTrigger;
+import com.ksyun.agent.runtime.context.HeuristicTokenCounter;
+import com.ksyun.agent.runtime.context.LlmContextSummarizer;
+import com.ksyun.agent.runtime.context.MessageCountContextTrimmer;
+import com.ksyun.agent.runtime.context.TokenCountContextTrimmer;
+import com.ksyun.agent.runtime.context.ContextTokenBudgetCalculator;
+import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.registry.AgentProviderRegistrar;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.DefaultAgentRegistry;
@@ -38,12 +54,16 @@ import com.ksyun.agent.runtime.tool.approval.ToolApprovalPolicy;
 import com.ksyun.agent.runtime.tool.approval.ToolOperationFingerprint;
 import com.ksyun.agent.runtime.tool.authorization.DefaultToolPermissionEvaluator;
 import com.ksyun.agent.runtime.tool.authorization.ToolPermissionEvaluator;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Agent 框架自动装配配置。
@@ -60,6 +80,7 @@ import java.util.List;
  * - Terminal: （最终执行）
  */
 @AutoConfiguration
+@EnableConfigurationProperties(ContextProperties.class)
 public class AgentFrameworkAutoConfiguration {
 
     // --- 第一阶段已有 Bean ---
@@ -85,8 +106,52 @@ public class AgentFrameworkAutoConfiguration {
     @Bean
     public FrameworkQueryService frameworkQueryService(AgentRegistry agentRegistry,
                                                          ToolRegistry toolRegistry,
-                                                         SupervisorRegistry supervisorRegistry) {
-        return new FrameworkQueryService(agentRegistry, toolRegistry, supervisorRegistry);
+                                                         SupervisorRegistry supervisorRegistry,
+                                                         com.ksyun.agent.core.context.ContextTrimmer contextTrimmer,
+                                                         TokenCounter tokenCounter,
+                                                         ContextProperties contextProperties,
+                                                         ObjectProvider<ContextSummarizer> summarizerProvider,
+                                                         ObjectProvider<com.ksyun.agent.runtime.context.ContextWindowManager> contextWindowManagerProvider,
+                                                         ObjectProvider<com.ksyun.agent.application.context.ContextDemoApplicationService> demoServiceProvider) {
+        ContextProperties.Summary summaryProps = contextProperties.getSummary();
+        ContextSummaryOptions summaryOptions = new ContextSummaryOptions(
+                summaryProps.isEnabled(),
+                summaryProps.getTriggerRatio(),
+                summaryProps.getMinSourceTokens(),
+                summaryProps.getMaxSummaryTokens(),
+                summaryProps.getRecentGroupsToPreserve()
+        );
+
+        boolean summaryAvailable = summarizerProvider.getIfAvailable() != null;
+        boolean contextEnabled = contextProperties.isEnabled();
+
+        // Phase7 Batch4 新增运行时集成状态
+        boolean hasContextWindowManager = contextWindowManagerProvider.getIfAvailable() != null;
+        boolean hasDemoService = demoServiceProvider.getIfAvailable() != null;
+
+        FrameworkQueryService.ContextConfig contextConfig = new FrameworkQueryService.ContextConfig(
+                contextEnabled,
+                contextProperties.isMessageCountTrimmingEnabled(),
+                contextProperties.getMaxMessages(),
+                contextProperties.isTokenTrimmingEnabled(),
+                contextProperties.getMaxContextTokens(),
+                contextProperties.getReservedOutputTokens(),
+                contextProperties.getReservedProtocolTokens(),
+                contextProperties.getSafetyMarginTokens(),
+                summaryOptions,
+                summaryAvailable,
+                // Phase7 Batch4 新增
+                contextEnabled && hasContextWindowManager, // runtimeIntegrationEnabled
+                contextEnabled && hasContextWindowManager, // reactIntegrated
+                contextEnabled && hasContextWindowManager, // supervisorIntegrated
+                contextEnabled,                            // contextWindowSnapshotEnabled
+                true,                                      // fullHistoryPreserved
+                contextEnabled ? "SYSTEM_MESSAGE_WITH_WRAPPER" : "NONE", // summaryMessageMapping
+                contextEnabled,                            // resultMetadataEnabled
+                hasDemoService                             // demoAvailable
+        );
+        return new FrameworkQueryService(agentRegistry, toolRegistry, supervisorRegistry,
+                contextTrimmer, tokenCounter, contextConfig);
     }
 
     @Bean
@@ -222,5 +287,180 @@ public class AgentFrameworkAutoConfiguration {
     @ConditionalOnMissingBean
     public CheckpointIdGenerator checkpointIdGenerator() {
         return new UuidCheckpointIdGenerator();
+    }
+
+    // --- Phase7 Batch1 Context Management Beans ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextMessageHistoryValidator contextMessageHistoryValidator() {
+        return new ContextMessageHistoryValidator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextMessageGrouper contextMessageGrouper() {
+        return new ContextMessageGrouper();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TokenCounter tokenCounter() {
+        return new HeuristicTokenCounter();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.core.context.ContextTrimmer contextTrimmer(
+            ContextMessageHistoryValidator historyValidator,
+            ContextMessageGrouper grouper,
+            TokenCounter tokenCounter) {
+        return new MessageCountContextTrimmer(
+                historyValidator, grouper, tokenCounter);
+    }
+
+    // --- Phase7 Batch2 Token Budget & Pipeline Beans ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextTokenBudgetCalculator contextTokenBudgetCalculator() {
+        return new ContextTokenBudgetCalculator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public TokenCountContextTrimmer tokenCountContextTrimmer(
+            ContextMessageHistoryValidator historyValidator,
+            ContextMessageGrouper grouper,
+            TokenCounter tokenCounter) {
+        return new TokenCountContextTrimmer(
+                historyValidator, grouper, tokenCounter);
+    }
+
+    // --- Phase7 Batch3 Summary Beans ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextSummaryTrigger contextSummaryTrigger() {
+        return new ContextSummaryTrigger();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextSummarySelector contextSummarySelector(
+            ContextMessageGrouper grouper,
+            TokenCounter tokenCounter) {
+        return new ContextSummarySelector(grouper, tokenCounter);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextSummaryMerger contextSummaryMerger() {
+        return new ContextSummaryMerger();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextSummaryPromptBuilder contextSummaryPromptBuilder(
+            SensitiveValueSanitizer sanitizer) {
+        return new ContextSummaryPromptBuilder(sanitizer);
+    }
+
+    @Bean
+    @ConditionalOnBean(ModelInvocationGateway.class)
+    @ConditionalOnMissingBean
+    public ContextSummarizer contextSummarizer(
+            ModelInvocationGateway modelInvocationGateway,
+            ContextSummaryPromptBuilder promptBuilder,
+            TokenCounter tokenCounter,
+            Clock clock) {
+        return new LlmContextSummarizer(modelInvocationGateway, promptBuilder, tokenCounter, clock);
+    }
+
+    // --- Pipeline Bean（需要在摘要 Bean 之后装配） ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ContextProcessingPipeline contextProcessingPipeline(
+            com.ksyun.agent.core.context.ContextTrimmer contextTrimmer,
+            TokenCountContextTrimmer tokenCountTrimmer,
+            TokenCounter tokenCounter,
+            ContextSummaryTrigger summaryTrigger,
+            ContextSummarySelector summarySelector,
+            ContextSummaryMerger summaryMerger,
+            ObjectProvider<ContextSummarizer> summarizerProvider) {
+        ContextSummarizer summarizer = summarizerProvider.getIfAvailable();
+        return new ContextProcessingPipeline(
+                contextTrimmer, tokenCountTrimmer, tokenCounter,
+                summaryTrigger, summarySelector, summaryMerger,
+                Optional.ofNullable(summarizer));
+    }
+
+    // --- Phase7 Batch4 Context Window Manager Beans ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.runtime.context.ContextProcessingRequestFactory contextProcessingRequestFactory(
+            ContextProperties contextProperties) {
+        ContextProperties.Summary summaryProps = contextProperties.getSummary();
+        ContextSummaryOptions summaryOptions = new ContextSummaryOptions(
+                summaryProps.isEnabled(),
+                summaryProps.getTriggerRatio(),
+                summaryProps.getMinSourceTokens(),
+                summaryProps.getMaxSummaryTokens(),
+                summaryProps.getRecentGroupsToPreserve()
+        );
+
+        com.ksyun.agent.core.context.ContextTokenBudget tokenBudget = null;
+        if (contextProperties.isTokenTrimmingEnabled()) {
+            tokenBudget = com.ksyun.agent.core.context.ContextTokenBudget.calculate(
+                    contextProperties.getMaxContextTokens(),
+                    contextProperties.getReservedOutputTokens(),
+                    contextProperties.getReservedProtocolTokens(),
+                    contextProperties.getSafetyMarginTokens());
+        }
+
+        int additionalReservedTokens = 0;
+
+        return new com.ksyun.agent.runtime.context.ContextProcessingRequestFactory(
+                contextProperties.isMessageCountTrimmingEnabled(),
+                contextProperties.getMaxMessages(),
+                contextProperties.isTokenTrimmingEnabled(),
+                tokenBudget,
+                additionalReservedTokens,
+                summaryOptions);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager(
+            ContextProcessingPipeline pipeline,
+            com.ksyun.agent.runtime.context.ContextProcessingRequestFactory requestFactory,
+            Clock clock,
+            ContextProperties contextProperties) {
+        return new com.ksyun.agent.runtime.context.ContextWindowManager(
+                pipeline, requestFactory, clock, contextProperties.isEnabled());
+    }
+
+    // --- Phase7 Batch4 Context Demo Beans ---
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.application.context.ContextDemoHistoryFactory contextDemoHistoryFactory() {
+        return new com.ksyun.agent.application.context.ContextDemoHistoryFactory();
+    }
+
+    @Bean
+    @ConditionalOnBean(ModelInvocationGateway.class)
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.application.context.ContextDemoApplicationService contextDemoApplicationService(
+            com.ksyun.agent.application.context.ContextDemoHistoryFactory historyFactory,
+            ContextProcessingPipeline pipeline,
+            com.ksyun.agent.runtime.context.ContextProcessingRequestFactory requestFactory,
+            ModelInvocationGateway modelGateway,
+            RunIdGenerator runIdGenerator,
+            Clock clock) {
+        return new com.ksyun.agent.application.context.ContextDemoApplicationService(
+                historyFactory, pipeline, requestFactory, modelGateway, runIdGenerator, clock);
     }
 }

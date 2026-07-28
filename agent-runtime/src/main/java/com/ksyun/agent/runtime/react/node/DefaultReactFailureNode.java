@@ -2,7 +2,9 @@ package com.ksyun.agent.runtime.react.node;
 
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.exception.AgentErrorCode;
+import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
 import org.slf4j.Logger;
@@ -38,12 +40,16 @@ public class DefaultReactFailureNode implements ReactFailureNode {
 
         String mappedErrorCode = mapErrorCode(errorCode);
 
+        // 合并上下文处理追踪到 metadata（框架失败前可能已存在 Trace）
+        ContextProcessingTrace trace = getLatestContextTrace(state);
+        Map<String, Object> metadata = ContextMetadataHelper.mergeContextMetadata(Map.of(), trace);
+
         AgentResult result = new AgentResult(
                 definition.name(),
                 false,
                 failureMessage,
                 java.util.List.of(),
-                Map.of(),
+                metadata,
                 mappedErrorCode
         );
 

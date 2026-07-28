@@ -1,8 +1,10 @@
 package com.ksyun.agent.runtime.supervisor.node;
 
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
+import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.supervisor.SupervisorStopReason;
 
 import java.util.Map;
@@ -32,12 +34,16 @@ public class DefaultSupervisorFailureNode implements SupervisorFailureNode {
 
         String mappedErrorCode = mapErrorCode(errorCode);
 
+        // 合并 Supervisor 上下文处理追踪到 metadata
+        ContextProcessingTrace trace = getLatestContextTrace(state);
+        Map<String, Object> metadata = ContextMetadataHelper.mergeContextMetadata(Map.of(), trace);
+
         AgentResult result = new AgentResult(
                 definition.name(),
                 false,
                 failureMessage,
                 java.util.List.of(),
-                Map.of(),
+                metadata,
                 mappedErrorCode
         );
 
@@ -45,9 +51,6 @@ public class DefaultSupervisorFailureNode implements SupervisorFailureNode {
     }
 
     private String mapErrorCode(AgentErrorCode errorCode) {
-        SupervisorStopReason stopReason = null;
-        // 读取 stopReason 来帮助映射
-        // 但这里简化处理：基于 errorCode 直接映射
         return switch (errorCode) {
             case MODEL_INVOCATION_FAILED -> AgentErrorCode.MODEL_INVOCATION_FAILED.name();
             case AGENT_NOT_FOUND -> AgentErrorCode.AGENT_NOT_FOUND.name();

@@ -38,6 +38,10 @@ public final class SupervisorStateKeys {
     public static final String FAILURE_ERROR_CODE = "failureErrorCode";
     public static final String FAILURE_MESSAGE = "failureMessage";
 
+    // ---- Phase7 Batch4 上下文窗口 ----
+    public static final String CONTEXT_WINDOW_SNAPSHOT = "contextWindowSnapshot";
+    public static final String LATEST_CONTEXT_TRACE = "latestContextTrace";
+
     // ---- 类型安全读取方法 ----
 
     public static SupervisorDefinition getSupervisorDefinition(AgentState state) {
@@ -94,6 +98,22 @@ public final class SupervisorStateKeys {
 
     public static String getFailureMessage(AgentState state) {
         return state.<String>value(FAILURE_MESSAGE).orElse(null);
+    }
+
+    // ---- Phase7 Batch4 上下文窗口访问器 ----
+
+    /**
+     * 获取 Supervisor 上下文窗口快照。初始为空。
+     */
+    public static com.ksyun.agent.runtime.context.ContextWindowSnapshot getContextWindowSnapshot(AgentState state) {
+        return state.<com.ksyun.agent.runtime.context.ContextWindowSnapshot>value(CONTEXT_WINDOW_SNAPSHOT).orElse(null);
+    }
+
+    /**
+     * 获取 Supervisor 最新上下文处理追踪。初始为空。
+     */
+    public static com.ksyun.agent.core.context.ContextProcessingTrace getLatestContextTrace(AgentState state) {
+        return state.<com.ksyun.agent.core.context.ContextProcessingTrace>value(LATEST_CONTEXT_TRACE).orElse(null);
     }
 
     private static <T> T getRequired(AgentState state, String key, Class<T> type) {

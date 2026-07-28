@@ -1,11 +1,13 @@
 package com.ksyun.agent.runtime.supervisor.node;
 
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.exception.AgentErrorCode;
+import com.ksyun.agent.core.supervisor.SupervisorDefinition;
+import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.supervisor.SupervisorAction;
 import com.ksyun.agent.runtime.supervisor.SupervisorDecision;
 import com.ksyun.agent.runtime.supervisor.SupervisorStopReason;
-import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 
 import java.util.*;
 
@@ -72,6 +74,10 @@ public class DefaultSupervisorCompleteNode implements SupervisorCompleteNode {
                 "failedAgentCount", failedCount,
                 "stopReason", SupervisorStopReason.COMPLETED.name()
         );
+
+        // 合并 Supervisor 上下文处理追踪到 metadata
+        ContextProcessingTrace trace = getLatestContextTrace(state);
+        metadata = ContextMetadataHelper.mergeContextMetadata(metadata, trace);
 
         AgentResult result = new AgentResult(
                 definition.name(),

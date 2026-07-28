@@ -25,6 +25,11 @@ const routes = [
     component: () => import('../views/SupervisorInvokeView.vue')
   },
   {
+    path: '/context',
+    name: 'ContextManagement',
+    component: () => import('../views/ContextManagementView.vue')
+  },
+  {
     path: '/permission-demo',
     name: 'PermissionDemo',
     component: () => import('../views/PermissionDemoView.vue')

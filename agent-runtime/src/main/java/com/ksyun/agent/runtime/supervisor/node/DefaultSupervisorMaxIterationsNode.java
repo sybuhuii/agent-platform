@@ -1,8 +1,10 @@
 package com.ksyun.agent.runtime.supervisor.node;
 
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
+import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.supervisor.SupervisorStopReason;
 
 import java.util.List;
@@ -29,6 +31,10 @@ public class DefaultSupervisorMaxIterationsNode implements SupervisorMaxIteratio
                 "agentResultCount", agentResults.size(),
                 "supervisorName", definition.name()
         );
+
+        // 合并 Supervisor 上下文处理追踪到 metadata
+        ContextProcessingTrace trace = getLatestContextTrace(state);
+        metadata = ContextMetadataHelper.mergeContextMetadata(metadata, trace);
 
         AgentResult result = new AgentResult(
                 definition.name(),

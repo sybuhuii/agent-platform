@@ -13,6 +13,7 @@
         <router-link to="/" class="nav-item">首页</router-link>
         <router-link to="/agents" class="nav-item">单Agent调用</router-link>
         <router-link to="/supervisors" class="nav-item">Supervisor调用</router-link>
+        <router-link to="/context" class="nav-item">上下文管理</router-link>
         <router-link to="/permission-demo" class="nav-item">权限差异演示</router-link>
         <router-link to="/hitl" class="nav-item">人机审批</router-link>
         <router-link v-if="hasPermission('security:user:read')" to="/admin/users" class="nav-item">用户管理</router-link>

@@ -47,6 +47,10 @@ public final class ReactStateKeys {
     public static final String CHECKPOINT_ID = "checkpointId";
     public static final String RUN_STATUS = "runStatus";
 
+    // ---- 新增 Key（Phase7 Batch4 上下文窗口）----
+    public static final String CONTEXT_WINDOW_SNAPSHOT = "contextWindowSnapshot";
+    public static final String LATEST_CONTEXT_TRACE = "latestContextTrace";
+
     // ---- 类型安全读取方法 ----
 
     public static AgentDefinition getAgentDefinition(AgentState state) {
@@ -137,6 +141,22 @@ public final class ReactStateKeys {
      */
     public static RunStatus getRunStatus(AgentState state) {
         return state.<RunStatus>value(RUN_STATUS).orElse(null);
+    }
+
+    // ---- Phase7 Batch4 上下文窗口访问器 ----
+
+    /**
+     * 获取上下文窗口快照。初始为空。
+     */
+    public static com.ksyun.agent.runtime.context.ContextWindowSnapshot getContextWindowSnapshot(AgentState state) {
+        return state.<com.ksyun.agent.runtime.context.ContextWindowSnapshot>value(CONTEXT_WINDOW_SNAPSHOT).orElse(null);
+    }
+
+    /**
+     * 获取最新上下文处理追踪。初始为空。
+     */
+    public static com.ksyun.agent.core.context.ContextProcessingTrace getLatestContextTrace(AgentState state) {
+        return state.<com.ksyun.agent.core.context.ContextProcessingTrace>value(LATEST_CONTEXT_TRACE).orElse(null);
     }
 
     private static <T> T getRequired(AgentState state, String key, Class<T> type) {
