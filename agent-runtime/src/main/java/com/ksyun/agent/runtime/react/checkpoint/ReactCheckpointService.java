@@ -202,18 +202,18 @@ public class ReactCheckpointService {
 
         Map<String, Object> stateData = buildStateData(state, cursor, buffer, filledApproval, definition.name(), nodeName);
 
-        String newCheckpointId = checkpointIdGenerator.generate();
+        // 保持原 checkpointId（同一runId整个恢复生命周期保持原checkpointId）
         long expectedVersion = existingCp.version();
         Instant now = clock.instant();
 
         AgentCheckpoint updatedCheckpoint = new AgentCheckpoint(
-                newCheckpointId,
-                runContext.runId(),
-                runContext.threadId(),
-                runContext.userId(),
-                runContext.sessionId(),
-                CheckpointExecutionType.REACT_AGENT,
-                definition.name(),
+                existingCp.checkpointId(),  // 保持原 checkpointId，不生成新的
+                existingCp.runId(),
+                existingCp.threadId(),
+                existingCp.userId(),
+                existingCp.sessionId(),
+                existingCp.executionType(),
+                existingCp.agentName(),
                 nodeName,
                 stateData,
                 filledApproval,
@@ -232,7 +232,7 @@ public class ReactCheckpointService {
         }
 
         log.info("Checkpoint re-suspended: checkpointId={}, runId={}, version={}, newApprovalId={}",
-                newCheckpointId, runContext.runId(), expectedVersion + 1, filledApproval.approvalId());
+                existingCp.checkpointId(), runContext.runId(), expectedVersion + 1, filledApproval.approvalId());
 
         return updatedCheckpoint;
     }

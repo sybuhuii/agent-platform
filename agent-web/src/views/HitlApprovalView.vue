@@ -165,7 +165,6 @@ const pendingList = ref([])
 const pendingLoading = ref(false)
 let pollTimer = null
 let isVisible = true
-let isSubmitting = false // 审批/恢复请求期间暂停轮询
 
 const latestResumeResult = ref(null)
 
@@ -216,12 +215,11 @@ async function triggerDangerousOp() {
 
 // 加载待审批列表
 async function loadPending() {
-  if (isSubmitting) return // 审批/恢复期间暂停轮询
   pendingLoading.value = true
   try {
     const data = await listPendingApprovals()
     const list = Array.isArray(data) ? data : []
-    // 保留已有的 processing 和 error 状态；移除不再存在的项标记为 invalid
+    // 保留已有的 processing 和 error 状态
     const newIds = new Set(list.map(i => i.approvalId))
     pendingList.value = list.map(item => {
       const existing = pendingList.value.find(p => p.approvalId === item.approvalId)
@@ -296,7 +294,6 @@ async function executeConfirm() {
   confirmExecuting.value = true
   item.processing = true
   item.error = null
-  isSubmitting = true // 暂停轮询
 
   try {
     const data = await decideAndResume(item.runId, {
@@ -308,14 +305,11 @@ async function executeConfirm() {
     // 记录恢复结果
     latestResumeResult.value = data
 
+    // 立即刷新列表（不暂停轮询）
+    await loadPending()
+
     if (data && data.status === 'SUSPENDED') {
-      // 恢复后再次挂起：刷新列表获取新审批
-      await loadPending()
-    } else {
-      // 完成或失败：从列表移除旧审批
-      pendingList.value = pendingList.value.filter(p => p.approvalId !== item.approvalId)
-      // 刷新列表确保最新
-      await loadPending()
+      // 恢复后再次挂起：列表已刷新，新的审批会自动出现
     }
 
     confirmDialog.value = null
@@ -323,9 +317,7 @@ async function executeConfirm() {
     if (e.status === 409) {
       item.error = '审批状态已发生变化，请刷新'
       item.invalid = true
-      // 关闭确认对话框
       confirmDialog.value = null
-      // 重新拉取列表
       await loadPending()
     } else {
       item.error = e.message || '操作失败'
@@ -334,7 +326,6 @@ async function executeConfirm() {
   } finally {
     item.processing = false
     confirmExecuting.value = false
-    isSubmitting = false // 恢复轮询
   }
 }
 
@@ -389,7 +380,7 @@ function riskClass(level) {
 function startPolling() {
   stopPolling()
   pollTimer = setInterval(() => {
-    if (isVisible && !isSubmitting && !pendingLoading.value && !confirmDialog.value) {
+    if (isVisible && !pendingLoading.value && !confirmDialog.value) {
       loadPending()
     }
   }, 8000) // 每8秒轮询

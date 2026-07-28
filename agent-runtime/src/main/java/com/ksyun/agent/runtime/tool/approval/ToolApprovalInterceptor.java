@@ -230,8 +230,14 @@ public class ToolApprovalInterceptor implements ToolInterceptor {
             );
         }
 
-        // fingerprint 匹配
-        if (payload.operationFingerprint() != null && !payload.operationFingerprint().equals(currentFingerprint)) {
+        // fingerprint 必须非空且完全匹配
+        if (payload.operationFingerprint() == null || payload.operationFingerprint().isBlank()) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_APPROVAL_DECISION,
+                    "TOOL approval operationFingerprint must not be empty"
+            );
+        }
+        if (!payload.operationFingerprint().equals(currentFingerprint)) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INVALID_APPROVAL_DECISION,
                     "Approval fingerprint does not match current operation"

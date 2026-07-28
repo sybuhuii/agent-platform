@@ -1,6 +1,5 @@
 package com.ksyun.agent.runtime.react.checkpoint;
 
-import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
@@ -27,7 +26,7 @@ import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
  * 7. 不得访问 CheckpointStore
  * 8. 不得生成新的 runId 或 threadId
  * <p>
- * 恢复覆盖规则：
+ * 恢复覆盖规则（Validator 已在抢占前拒绝身份冲突）：
  * - pendingApproval 替换为 checkpoint 中已决策版本
  * - currentStatus 改为 RUNNING
  * - finalResult 清空
@@ -35,10 +34,12 @@ import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
  * - failureMessage 清空
  * - failureErrorCode 清空
  * - checkpointId 保持当前 Checkpoint ID
- * - pendingToolCalls、cursor、buffer、messages、iteration、maxIterations 保持
- * - RunContext 保持（不修改 Store 内 stateData）
- * - 不得重新执行 Reason
- * - 不得把 Checkpoint 状态直接作为可变 Map 交给图
+ * - RunContext 保持（Validator已校验与顶层一致，不修正）
+ * - messages、iteration、maxIterations、pendingToolCalls、cursor、buffer 保持
+ * - 不修改 Store 内 stateData
+ * - 不得信任或修正冲突的身份字段后继续恢复
+ * - RunContext 缺失或类型错误时抛结构化异常
+ * - 不重新进入产生当前 ToolCall 的 Reason
  */
 public class ReactCheckpointStateMapper {
 
@@ -52,7 +53,6 @@ public class ReactCheckpointStateMapper {
      */
     public Map<String, Object> toStateData(ReactAgentState state) {
         Objects.requireNonNull(state, "state must not be null");
-        // AgentCheckpoint 构造器会做防御性深拷贝，此处直接传原 data
         return new HashMap<>(state.data());
     }
 
@@ -67,20 +67,22 @@ public class ReactCheckpointStateMapper {
      * - failureMessage 清空
      * - failureErrorCode 清空
      * - checkpointId 保持当前 Checkpoint ID
+     * - RunContext 保持（Validator已校验与顶层一致，不修正冲突）
      * - 传入独立不可变快照，不修改 Store 内的 stateData
-     * - RunContext 中 userId、runId、threadId 以 Checkpoint 顶层为准
      * <p>
-     * 不信任 stateData 中与顶层 Checkpoint 冲突的身份字段。
+     * RunContext 缺失或类型错误时抛 CHECKPOINT_NOT_RESUMABLE，
+     * 不修正后继续恢复。
      *
      * @param checkpoint 包含最新已决策 PendingApproval 的 Checkpoint
      * @return 可用于恢复执行的 ReactAgentState
+     * @throws AgentFrameworkException RunContext 缺失或类型错误
      */
     public ReactAgentState fromCheckpointForResume(AgentCheckpoint checkpoint) {
         Objects.requireNonNull(checkpoint, "checkpoint must not be null");
 
         Map<String, Object> stateData = checkpoint.stateData();
         if (stateData == null || stateData.isEmpty()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
                     "Checkpoint stateData must not be empty");
         }
 
@@ -96,24 +98,21 @@ public class ReactCheckpointStateMapper {
         resumeState.put(FAILURE_ERROR_CODE, null);
         resumeState.put(CHECKPOINT_ID, checkpoint.checkpointId());
 
-        // 校验并修复 RunContext 身份字段以 Checkpoint 顶层为准
+        // RunContext 必须存在且类型正确（Validator 已在抢占前校验）
+        // 此处做防御性检查：缺失或类型错误直接抛异常，不修正后继续
         Object runContextObj = resumeState.get(RUN_CONTEXT);
-        if (runContextObj instanceof RunContext rc) {
-            if (!rc.runId().equals(checkpoint.runId())
-                    || !rc.threadId().equals(checkpoint.threadId())
-                    || !rc.userId().equals(checkpoint.userId())) {
-                // 使用 Checkpoint 顶层身份重建 RunContext
-                RunContext corrected = new RunContext(
-                        checkpoint.userId(),
-                        rc.sessionId(),
-                        checkpoint.threadId(),
-                        checkpoint.runId(),
-                        rc.roles(),
-                        rc.permissions()
-                );
-                resumeState.put(RUN_CONTEXT, corrected);
-            }
+        if (runContextObj == null) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "RunContext is missing in stateData");
         }
+        if (!(runContextObj instanceof RunContext)) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "RunContext has wrong type: expected RunContext, got "
+                            + runContextObj.getClass().getName());
+        }
+
+        // Validator 已校验 RunContext 身份字段与 Checkpoint 顶层一致
+        // Mapper 不修正冲突的身份字段，直接使用 stateData 中的 RunContext
 
         return new ReactAgentState(resumeState);
     }

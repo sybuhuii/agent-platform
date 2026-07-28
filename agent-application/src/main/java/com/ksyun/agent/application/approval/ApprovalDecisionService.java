@@ -65,11 +65,11 @@ public class ApprovalDecisionService {
                         AgentErrorCode.CHECKPOINT_NOT_FOUND,
                         "Checkpoint not found: runId=" + command.runId()));
 
-        // 2. 校验归属用户
+        // 2. 校验归属用户 - 不匹配使用安全 NOT_FOUND，不泄漏信息
         if (!checkpoint.userId().equals(operator.userId())) {
             throw new AgentFrameworkException(
-                    AgentErrorCode.PERMISSION_DENIED,
-                    "User does not own this checkpoint");
+                    AgentErrorCode.CHECKPOINT_NOT_FOUND,
+                    "Checkpoint not found");
         }
 
         // 3. 校验 Checkpoint 状态

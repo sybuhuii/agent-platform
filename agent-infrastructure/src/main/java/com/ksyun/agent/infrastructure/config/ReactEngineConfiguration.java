@@ -18,10 +18,12 @@ import com.ksyun.agent.runtime.react.ReactResumeEngine;
 import com.ksyun.agent.runtime.react.ReactRouter;
 import com.ksyun.agent.runtime.react.ReactToolExecutionRouter;
 import com.ksyun.agent.runtime.react.checkpoint.CheckpointResumeCoordinator;
+import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointLifecycleService;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointService;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointStateMapper;
 import com.ksyun.agent.runtime.react.checkpoint.ReactResumeValidator;
 import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
+import com.ksyun.agent.runtime.tool.approval.ToolOperationFingerprint;
 import com.ksyun.agent.runtime.react.node.DefaultReactSuspendNode;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
@@ -67,8 +69,8 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ReactResumeValidator reactResumeValidator() {
-        return new ReactResumeValidator();
+    public ReactResumeValidator reactResumeValidator(ToolOperationFingerprint fingerprintCalculator) {
+        return new ReactResumeValidator(fingerprintCalculator);
     }
 
     @Bean
@@ -106,6 +108,13 @@ public class ReactEngineConfiguration {
     @ConditionalOnMissingBean
     public PendingApprovalQueryService pendingApprovalQueryService(CheckpointStore checkpointStore) {
         return new PendingApprovalQueryService(checkpointStore);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReactCheckpointLifecycleService reactCheckpointLifecycleService(
+            CheckpointStore checkpointStore, Clock clock) {
+        return new ReactCheckpointLifecycleService(checkpointStore, clock);
     }
 
     // ---- 模型依赖 Bean ----
@@ -210,19 +219,19 @@ public class ReactEngineConfiguration {
     public ReactResumeEngine reactResumeEngine(
             CheckpointResumeCoordinator resumeCoordinator,
             ReactCheckpointStateMapper stateMapper,
-            ReactCheckpointService checkpointService,
-            CheckpointStore checkpointStore,
-            ReactAgentGraphFactory graphFactory,
-            Clock clock) {
-        return new ReactResumeEngine(resumeCoordinator, stateMapper, checkpointService, checkpointStore, graphFactory, clock);
+            ReactResumeValidator resumeValidator,
+            ReactCheckpointLifecycleService lifecycleService,
+            ReactAgentGraphFactory graphFactory) {
+        return new ReactResumeEngine(resumeCoordinator, stateMapper, resumeValidator, lifecycleService, graphFactory);
     }
 
     @Bean
     @ConditionalOnBean(ModelInvocationGateway.class)
     public ApprovalResumeApplicationService approvalResumeApplicationService(
             ApprovalDecisionService decisionService,
-            ReactResumeEngine resumeEngine) {
-        return new ApprovalResumeApplicationService(decisionService, resumeEngine);
+            ReactResumeEngine resumeEngine,
+            CheckpointStore checkpointStore) {
+        return new ApprovalResumeApplicationService(decisionService, resumeEngine, checkpointStore);
     }
 
     // ---- Dev Application Service ----

@@ -168,17 +168,45 @@ public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
     /**
      * 判断审批是否绑定到当前 ToolCall。
      * <p>
-     * 校验 toolCallId 和 toolName 匹配。
+     * 必须验证：runId、threadId、userId、toolCallId、operationName/toolName、operationFingerprint。
+     * 不匹配时不注入审批（ToolApprovalInterceptor会再次校验并拒绝执行）。
      * 不把同一审批传给其他 ToolCall。
      */
     private boolean isApprovalBoundToCall(PendingApproval approval, ToolCall toolCall, RunContext runContext) {
-        if (approval.payload().toolCallId() == null) {
+        if (approval == null || approval.payload() == null) {
             return false;
         }
-        if (!approval.payload().toolCallId().equals(toolCall.id())) {
+        // toolCallId 严格匹配
+        if (approval.payload().toolCallId() == null
+                || !approval.payload().toolCallId().equals(toolCall.id())) {
             return false;
         }
+        // operationName/toolName 严格匹配
         if (!approval.payload().operationName().equals(toolCall.name())) {
+            return false;
+        }
+        // runId 匹配
+        if (!approval.payload().runId().equals(runContext.runId())) {
+            log.warn("Approval runId mismatch: approvalRunId={}, stateRunId={}",
+                    approval.payload().runId(), runContext.runId());
+            return false;
+        }
+        // threadId 匹配
+        if (!approval.payload().threadId().equals(runContext.threadId())) {
+            log.warn("Approval threadId mismatch: approvalThreadId={}, stateThreadId={}",
+                    approval.payload().threadId(), runContext.threadId());
+            return false;
+        }
+        // userId 匹配
+        if (!approval.payload().userId().equals(runContext.userId())) {
+            log.warn("Approval userId mismatch: approvalUserId={}, stateUserId={}",
+                    approval.payload().userId(), runContext.userId());
+            return false;
+        }
+        // operationFingerprint 非空（TOOL审批必须有指纹）
+        if (approval.payload().operationFingerprint() == null
+                || approval.payload().operationFingerprint().isBlank()) {
+            log.warn("Approval operationFingerprint is empty for TOOL approval");
             return false;
         }
         return true;
