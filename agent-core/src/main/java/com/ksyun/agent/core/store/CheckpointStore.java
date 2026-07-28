@@ -87,6 +87,19 @@ public interface CheckpointStore {
     void delete(String runId);
 
     /**
+     * 按 runId 和条件删除 Checkpoint，避免误删同一 runId 后续产生的新 Checkpoint。
+     * <p>
+     * 仅当 checkpointId 和 version 匹配时才删除。
+     * 用于恢复完成后安全清理，防止误删再次挂起产生的新 Checkpoint。
+     *
+     * @param runId        运行 ID
+     * @param checkpointId 期望的 Checkpoint ID
+     * @param expectedVersion 期望的版本号
+     * @return true 表示删除成功，false 表示不匹配或不存在
+     */
+    boolean deleteIfVersionMatches(String runId, String checkpointId, long expectedVersion);
+
+    /**
      * 按 threadId 查找所有 Checkpoint（兼容保留）。
      * <p>
      * 同一个 threadId 可能对应多次运行（runId 不同）。

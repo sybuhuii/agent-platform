@@ -72,7 +72,12 @@ public class DeleteDemoRecordTool implements AgentTool {
         if (result.deleted()) {
             return ToolResult.success("Record deleted: " + result.message());
         } else {
-            return ToolResult.failure("DELETE_FAILED", result.message());
+            // 记录已不存在时返回正常的幂等结果，不抛系统异常
+            // metadata 中标记 alreadyAbsent
+            return ToolResult.success(
+                    result.message(),
+                    Map.of("alreadyAbsent", true)
+            );
         }
     }
 

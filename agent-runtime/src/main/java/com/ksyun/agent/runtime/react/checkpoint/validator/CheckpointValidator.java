@@ -60,9 +60,14 @@ public class CheckpointValidator {
             throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
                     "SUSPENDED Checkpoint must have pendingApproval");
         }
-        if (checkpoint.status() != CheckpointStatus.SUSPENDED && checkpoint.pendingApproval() != null) {
+        if (checkpoint.status() == CheckpointStatus.RESUMING && checkpoint.pendingApproval() == null) {
             throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                    "Non-SUSPENDED Checkpoint must not have pendingApproval");
+                    "RESUMING Checkpoint must have pendingApproval");
+        }
+        if ((checkpoint.status() == CheckpointStatus.COMPLETED || checkpoint.status() == CheckpointStatus.FAILED)
+                && checkpoint.pendingApproval() != null) {
+            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
+                    "COMPLETED/FAILED Checkpoint must not have pendingApproval");
         }
 
         // ApprovalStatus 与 ApprovalDecision 一致性

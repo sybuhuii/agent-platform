@@ -2,6 +2,7 @@ package com.ksyun.agent.core.approval;
 
 import com.ksyun.agent.core.tool.ToolRiskLevel;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Map;
@@ -33,7 +34,10 @@ public record InterruptPayload(
         Instant requestedAt,
         String toolCallId,
         String operationFingerprint
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public InterruptPayload {
         Objects.requireNonNull(approvalId, "approvalId must not be null");

@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.approval;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -18,7 +19,10 @@ public record ApprovalDecision(
         String decidedBy,
         String comment,
         Instant decidedAt
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public ApprovalDecision {
         Objects.requireNonNull(approvalId, "approvalId must not be null");

@@ -11,7 +11,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 /**
  * Web MVC 配置，注册 SessionAuthenticationInterceptor。
  * <p>
- * 保护路径：/api/agent/**, /api/supervisor/**, /api/admin/**, /api/auth/me, /api/auth/logout
+ * 保护路径：/api/agent/**, /api/supervisor/**, /api/admin/**, /api/hitl/**,
+ *           /api/auth/me, /api/auth/logout, /api/auth/session
  * 排除路径：/api/auth/login, /api/framework/**, /api/dev/**
  */
 @Configuration
@@ -30,6 +31,7 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
                         "/api/agent/**",
                         "/api/supervisor/**",
                         "/api/admin/**",
+                        "/api/hitl/**",
                         "/api/auth/me",
                         "/api/auth/logout",
                         "/api/auth/session"

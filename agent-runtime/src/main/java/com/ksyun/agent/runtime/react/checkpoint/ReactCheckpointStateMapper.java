@@ -1,22 +1,14 @@
 package com.ksyun.agent.runtime.react.checkpoint;
 
-import com.ksyun.agent.core.agent.AgentDefinition;
-import com.ksyun.agent.core.agent.AgentTask;
 import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.run.RunStatus;
-import com.ksyun.agent.core.tool.ToolCall;
-import com.ksyun.agent.core.tool.ToolResult;
 import com.ksyun.agent.runtime.react.ReactAgentState;
-import com.ksyun.agent.runtime.react.ReactStopReason;
-import com.ksyun.agent.runtime.react.ToolExecutionTrace;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -36,11 +28,15 @@ import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
  * 8. 不得生成新的 runId 或 threadId
  * <p>
  * 恢复覆盖规则：
- * - pendingApproval 替换为最新已决策版本
+ * - pendingApproval 替换为 checkpoint 中已决策版本
  * - currentStatus 改为 RUNNING
  * - finalResult 清空
- * - checkpointId 保持
- * - pendingToolCalls、cursor、buffer、messages、iteration 保持
+ * - stopReason 清空
+ * - failureMessage 清空
+ * - failureErrorCode 清空
+ * - checkpointId 保持当前 Checkpoint ID
+ * - pendingToolCalls、cursor、buffer、messages、iteration、maxIterations 保持
+ * - RunContext 保持（不修改 Store 内 stateData）
  * - 不得重新执行 Reason
  * - 不得把 Checkpoint 状态直接作为可变 Map 交给图
  */
@@ -70,8 +66,11 @@ public class ReactCheckpointStateMapper {
      * - stopReason 清空
      * - failureMessage 清空
      * - failureErrorCode 清空
-     * - checkpointId 保持
-     * - 传入独立不可变快照
+     * - checkpointId 保持当前 Checkpoint ID
+     * - 传入独立不可变快照，不修改 Store 内的 stateData
+     * - RunContext 中 userId、runId、threadId 以 Checkpoint 顶层为准
+     * <p>
+     * 不信任 stateData 中与顶层 Checkpoint 冲突的身份字段。
      *
      * @param checkpoint 包含最新已决策 PendingApproval 的 Checkpoint
      * @return 可用于恢复执行的 ReactAgentState
@@ -96,6 +95,25 @@ public class ReactCheckpointStateMapper {
         resumeState.put(FAILURE_MESSAGE, null);
         resumeState.put(FAILURE_ERROR_CODE, null);
         resumeState.put(CHECKPOINT_ID, checkpoint.checkpointId());
+
+        // 校验并修复 RunContext 身份字段以 Checkpoint 顶层为准
+        Object runContextObj = resumeState.get(RUN_CONTEXT);
+        if (runContextObj instanceof RunContext rc) {
+            if (!rc.runId().equals(checkpoint.runId())
+                    || !rc.threadId().equals(checkpoint.threadId())
+                    || !rc.userId().equals(checkpoint.userId())) {
+                // 使用 Checkpoint 顶层身份重建 RunContext
+                RunContext corrected = new RunContext(
+                        checkpoint.userId(),
+                        rc.sessionId(),
+                        checkpoint.threadId(),
+                        checkpoint.runId(),
+                        rc.roles(),
+                        rc.permissions()
+                );
+                resumeState.put(RUN_CONTEXT, corrected);
+            }
+        }
 
         return new ReactAgentState(resumeState);
     }

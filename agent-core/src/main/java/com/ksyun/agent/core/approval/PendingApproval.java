@@ -1,5 +1,6 @@
 package com.ksyun.agent.core.approval;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -24,7 +25,10 @@ public record PendingApproval(
         ApprovalDecision decision,
         Instant createdAt,
         Instant updatedAt
-) {
+) implements Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public PendingApproval {
         Objects.requireNonNull(payload, "payload must not be null");

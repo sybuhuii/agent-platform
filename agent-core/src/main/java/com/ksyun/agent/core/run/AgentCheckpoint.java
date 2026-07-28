@@ -100,10 +100,16 @@ public record AgentCheckpoint(
             throw new IllegalArgumentException(
                     "pendingApproval must not be null when status is SUSPENDED");
         }
-        // 非 SUSPENDED 不得有 pendingApproval
-        if (status != CheckpointStatus.SUSPENDED && pendingApproval != null) {
+        // RESUMING 必须有 pendingApproval（已决策版本）
+        if (status == CheckpointStatus.RESUMING && pendingApproval == null) {
             throw new IllegalArgumentException(
-                    "pendingApproval must be null when status is not SUSPENDED");
+                    "pendingApproval must not be null when status is RESUMING");
+        }
+        // COMPLETED/FAILED 不得有 pendingApproval
+        if ((status == CheckpointStatus.COMPLETED || status == CheckpointStatus.FAILED)
+                && pendingApproval != null) {
+            throw new IllegalArgumentException(
+                    "pendingApproval must be null when status is " + status);
         }
 
         // stateData 防御性深拷贝，确保不可变
@@ -123,17 +129,33 @@ public record AgentCheckpoint(
     private static Map<String, Object> deepCopyState(Map<String, Object> original) {
         Map<String, Object> copy = new HashMap<>(original.size());
         for (Map.Entry<String, Object> entry : original.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof Map<?, ?> m) {
-                copy.put(entry.getKey(), Collections.unmodifiableMap(new HashMap<>(m)));
-            } else if (value instanceof List<?> l) {
-                copy.put(entry.getKey(), List.copyOf(l));
-            } else if (value instanceof Set<?> s) {
-                copy.put(entry.getKey(), Set.copyOf(s));
-            } else {
-                copy.put(entry.getKey(), value);
-            }
+            copy.put(entry.getKey(), deepCopyValue(entry.getValue()));
         }
         return Collections.unmodifiableMap(copy);
+    }
+
+    /**
+     * 递归深拷贝值，确保嵌套集合也不可变。
+     */
+    @SuppressWarnings("unchecked")
+    private static Object deepCopyValue(Object value) {
+        if (value instanceof Map<?, ?> m) {
+            Map<String, Object> inner = new HashMap<>(m.size());
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (e.getKey() instanceof String key) {
+                    inner.put(key, deepCopyValue(e.getValue()));
+                }
+            }
+            return Collections.unmodifiableMap(inner);
+        } else if (value instanceof List<?> l) {
+            List<Object> inner = new ArrayList<>(l.size());
+            for (Object item : l) {
+                inner.add(deepCopyValue(item));
+            }
+            return List.copyOf(inner);
+        } else if (value instanceof Set<?> s) {
+            return Set.copyOf(s);
+        }
+        return value;
     }
 }

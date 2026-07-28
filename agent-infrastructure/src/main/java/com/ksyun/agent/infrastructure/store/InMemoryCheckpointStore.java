@@ -159,6 +159,13 @@ public class InMemoryCheckpointStore implements CheckpointStore {
             return false;
         }
 
+        // 新 version 必须严格等于 expectedVersion + 1
+        if (checkpoint.version() != expectedVersion + 1) {
+            log.warn("Checkpoint version mismatch: expected new version={}, actual={}",
+                    expectedVersion + 1, checkpoint.version());
+            return false;
+        }
+
         String runId = checkpoint.runId();
 
         synchronized (writeLock) {
@@ -174,14 +181,19 @@ public class InMemoryCheckpointStore implements CheckpointStore {
                 return false;
             }
 
-            // 检查 threadId 是否变化，需要更新索引
-            String oldThreadId = existing.threadId();
-            String newThreadId = checkpoint.threadId();
+            // 稳定身份不得被替换
+            if (!existing.runId().equals(checkpoint.runId())
+                    || !existing.checkpointId().equals(checkpoint.checkpointId())) {
+                log.warn("Checkpoint identity fields changed during update: runId={}", runId);
+                return false;
+            }
 
             // 更新主存储
             byRunId.put(runId, checkpoint);
 
             // threadId 变化时更新索引
+            String oldThreadId = existing.threadId();
+            String newThreadId = checkpoint.threadId();
             if (!oldThreadId.equals(newThreadId)) {
                 updateThreadIdIndex(newThreadId, runId, oldThreadId);
             }
@@ -210,6 +222,47 @@ public class InMemoryCheckpointStore implements CheckpointStore {
             }
         }
         // 不存在时幂等
+    }
+
+    @Override
+    public boolean deleteIfVersionMatches(String runId, String checkpointId, long expectedVersion) {
+        if (runId == null || runId.isBlank() || checkpointId == null || checkpointId.isBlank()) {
+            return false;
+        }
+
+        synchronized (writeLock) {
+            AgentCheckpoint existing = byRunId.get(runId);
+
+            if (existing == null) {
+                // 不存在，幂等返回 false
+                return false;
+            }
+
+            // 必须同时匹配 checkpointId 和 version
+            if (!existing.checkpointId().equals(checkpointId)) {
+                log.debug("Conditional delete skipped: checkpointId mismatch. runId={}, expected={}, actual={}",
+                        runId, checkpointId, existing.checkpointId());
+                return false;
+            }
+
+            if (existing.version() != expectedVersion) {
+                log.debug("Conditional delete skipped: version mismatch. runId={}, expected={}, actual={}",
+                        runId, expectedVersion, existing.version());
+                return false;
+            }
+
+            AgentCheckpoint removed = byRunId.remove(runId);
+            if (removed != null) {
+                java.util.Set<String> runIds = byThreadId.get(removed.threadId());
+                if (runIds != null) {
+                    runIds.remove(runId);
+                    if (runIds.isEmpty()) {
+                        byThreadId.remove(removed.threadId());
+                    }
+                }
+            }
+            return true;
+        }
     }
 
     @Override

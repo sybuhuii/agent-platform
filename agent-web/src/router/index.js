@@ -30,7 +30,7 @@ const routes = [
     component: () => import('../views/PermissionDemoView.vue')
   },
   {
-    path: '/approval',
+    path: '/hitl',
     name: 'HitlApproval',
     component: () => import('../views/HitlApprovalView.vue')
   },

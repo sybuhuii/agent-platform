@@ -40,13 +40,14 @@ import java.util.Optional;
  * - 使用 CheckpointStore.save
  * <p>
  * 多次挂起支持：
- * - 首次挂起：不存在 Checkpoint，创建 version=0
- * - 再次挂起：已存在同 runId Checkpoint
- *   - 如果新 approvalId 与已有不同：使用 updateIfVersionMatches 更新
+ * - 首次挂起：不存在 Checkpoint，创建 version=0，status=SUSPENDED
+ * - 再次挂起：已存在同 runId Checkpoint（status=RESUMING）
+ *   - 新 approvalId 与已有不同：使用 updateIfVersionMatches 更新
  *   - version 在已有基础上 +1
  *   - 如果 approvalId 相同：幂等返回已有 Checkpoint
  * - 不得无条件覆盖
  * - 不得用 LangGraph4j CheckpointSaver
+ * - 不得从 SUSPENDED 状态覆盖（SUSPENDED 应该先被审批再恢复）
  * <p>
  * 不实现恢复。不删除旧 Checkpoint。
  * 不记录完整 stateData、参数或审批对象。
@@ -163,10 +164,14 @@ public class ReactCheckpointService {
     /**
      * 再次挂起：更新已有 Checkpoint。
      * <p>
+     * - 只能从 RESUMING 状态再次挂起（恢复后遇到新的危险工具）
      * - 新 approvalId 与已有不同：使用 updateIfVersionMatches
      * - version 在已有基础上 +1
      * - 新 checkpointId
      * - 如果 approvalId 相同：幂等返回已有 Checkpoint
+     * - 不得从 SUSPENDED 状态覆盖（SUSPENDED 应该先审批再恢复）
+     * - 不得删除旧 Checkpoint 后重新 save
+     * - 不得复用旧 approvalId
      */
     private AgentCheckpoint handleReSuspend(AgentCheckpoint existingCp,
                                              ReactAgentState state,
@@ -182,6 +187,13 @@ public class ReactCheckpointService {
             log.info("Re-suspend with same approvalId, idempotent: runId={}, approvalId={}",
                     runContext.runId(), approval.approvalId());
             return existingCp;
+        }
+
+        // 只允许从 RESUMING 状态再次挂起
+        if (existingCp.status() != CheckpointStatus.RESUMING) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_CONFLICT,
+                    "Cannot re-suspend checkpoint in status " + existingCp.status()
+                            + ", expected RESUMING. runId=" + runContext.runId());
         }
 
         // 新 approvalId：更新 Checkpoint
