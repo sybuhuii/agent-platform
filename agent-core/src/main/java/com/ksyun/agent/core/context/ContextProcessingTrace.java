@@ -1,7 +1,6 @@
 package com.ksyun.agent.core.context;
 
 import java.time.Instant;
-import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -37,7 +36,7 @@ public record ContextProcessingTrace(
     public ContextProcessingTrace {
         Objects.requireNonNull(diagnostics, "diagnostics must not be null");
         Objects.requireNonNull(processedAt, "processedAt must not be null");
-        diagnostics = Collections.unmodifiableSet(new LinkedHashSet<>(diagnostics));
+        diagnostics = Set.copyOf(new LinkedHashSet<>(diagnostics));
         if (originalMessageCount < 0) {
             throw new IllegalArgumentException("originalMessageCount must be >= 0, got: " + originalMessageCount);
         }

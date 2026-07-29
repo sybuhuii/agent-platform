@@ -355,15 +355,17 @@ public class AgentFrameworkAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ContextSummaryMerger contextSummaryMerger() {
-        return new ContextSummaryMerger();
+    public ContextSummaryMerger contextSummaryMerger(
+            ContextMessageHistoryValidator historyValidator) {
+        return new ContextSummaryMerger(historyValidator);
     }
 
     @Bean
     @ConditionalOnMissingBean
     public ContextSummaryPromptBuilder contextSummaryPromptBuilder(
-            SensitiveValueSanitizer sanitizer) {
-        return new ContextSummaryPromptBuilder(sanitizer);
+            SensitiveValueSanitizer sanitizer,
+            TokenCounter tokenCounter) {
+        return new ContextSummaryPromptBuilder(sanitizer, tokenCounter);
     }
 
     @Bean

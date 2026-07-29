@@ -3,9 +3,12 @@ package com.ksyun.agent.runtime.context;
 import com.ksyun.agent.core.context.TokenCounter;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.AssistantAgentMessage;
+import com.ksyun.agent.core.message.SummaryAgentMessage;
+import com.ksyun.agent.core.message.SystemAgentMessage;
 import com.ksyun.agent.core.message.ToolAgentMessage;
 import com.ksyun.agent.core.message.UserAgentMessage;
 import com.ksyun.agent.core.sanitizer.SensitiveValueSanitizer;
+import com.ksyun.agent.core.tool.ToolCall;
 
 import java.util.List;
 import java.util.Map;
@@ -16,18 +19,19 @@ import java.util.Objects;
  * <p>
  * 依赖：
  * - 现有敏感值脱敏能力（SensitiveValueSanitizer）
- * - 不访问 SessionStore 或 MemoryStore
+ * - TokenCounter（用于 Token 预算截断）
  * <p>
  * 约束：
- * - 不得把历史消息拼进 System 指令本身
- * - 历史消息作为单独 User 消息传入摘要模型
- * - 每条消息使用稳定角色标签
+ * - 所有可能进入摘要模型的文本必须统一脱敏：
+ *   User content、Assistant content、ToolResult content、existing summary content
+ * - 不得把 ToolCall 完整参数发送给摘要模型
+ * - 不得仅依赖 Map 的字段名识别敏感值，必须支持文本正文中的常见敏感内容
+ * - 不得把密码、credentialHash、sessionId、API Key、Bearer Token、完整权限集合发送给模型
+ * - 保留固定、不可被历史消息覆盖的摘要 System Prompt
+ * - 不得把历史消息拼接成可以突破边界标签的未隔离 Prompt
+ * - 不无依据地把每条消息固定截断为500字符
  * - ToolCall 只保存工具名和必要业务语义
- * - 不得包含 RunContext
- * - 不得包含 roles 和 permissions
- * - 不得包含 Spring Bean 信息
- * - 不得在日志打印完整摘要 Prompt
- * - 不得要求模型返回 JSON（本批默认纯文本输出）
+ * - 不得包含 RunContext、roles、permissions
  * - 线程安全、无状态
  */
 public class ContextSummaryPromptBuilder {
@@ -54,31 +58,30 @@ public class ContextSummaryPromptBuilder {
 
     private static final String HISTORY_START_TAG = "<conversation_history>";
     private static final String HISTORY_END_TAG = "</conversation_history>";
+    private static final String SUMMARY_START_TAG = "<previous_summary>";
+    private static final String SUMMARY_END_TAG = "</previous_summary>";
 
     private final SensitiveValueSanitizer sanitizer;
+    private final TokenCounter tokenCounter;
 
-    public ContextSummaryPromptBuilder(SensitiveValueSanitizer sanitizer) {
+    public ContextSummaryPromptBuilder(SensitiveValueSanitizer sanitizer, TokenCounter tokenCounter) {
         this.sanitizer = Objects.requireNonNull(sanitizer);
+        this.tokenCounter = Objects.requireNonNull(tokenCounter);
     }
 
     /**
      * 获取摘要系统指令。
-     * <p>
-     * 不得把历史消息拼进此指令。
-     *
-     * @return 系统指令文本
      */
     public String getSystemPrompt() {
         return SUMMARY_SYSTEM_PROMPT;
     }
 
     /**
-     * 将历史消息构建为 User 消息内容（包含分隔符）。
+     * 将历史消息构建为 User 消息内容（包含边界标签隔离）。
      * <p>
-     * 历史消息作为不可信数据放在明确分隔符中。
-     *
-     * @param sourceMessages 源消息列表
-     * @return 包含历史消息的 User 消息文本
+     * 历史消息作为不可信数据放在明确分隔符中，不得突破边界标签。
+     * 所有文本正文统一脱敏。
+     * 不无依据固定截断500字符。
      */
     public String buildHistoryUserContent(List<AgentMessage> sourceMessages) {
         Objects.requireNonNull(sourceMessages, "sourceMessages must not be null");
@@ -98,79 +101,85 @@ public class ContextSummaryPromptBuilder {
 
     /**
      * 将旧摘要信息附加到历史消息内容中。
-     *
-     * @param historyContent  历史消息文本
-     * @param existingSummary 旧摘要（如果存在）
-     * @return 包含旧摘要的完整 User 消息文本
+     * <p>
+     * 旧摘要文本也必须脱敏，放在独立分隔符中。
      */
     public String appendExistingSummary(String historyContent, String existingSummary) {
         if (existingSummary == null || existingSummary.isBlank()) {
             return historyContent;
         }
-        return historyContent + "\nPrevious summary:\n<previous_summary>\n"
-                + existingSummary + "\n</previous_summary>\n";
+        // 旧摘要正文也必须脱敏
+        String sanitizedSummary = sanitizeText(existingSummary);
+        return historyContent + "\nPrevious summary (also needs to be incorporated):\n"
+                + SUMMARY_START_TAG + "\n"
+                + sanitizedSummary + "\n"
+                + SUMMARY_END_TAG + "\n";
     }
 
     private String formatMessage(AgentMessage msg) {
         if (msg instanceof UserAgentMessage user) {
-            return "[User]: " + truncateContent(user.content());
+            return "[User]: " + sanitizeText(user.content());
         } else if (msg instanceof AssistantAgentMessage assistant) {
             StringBuilder sb = new StringBuilder();
-            sb.append("[Assistant]: ").append(truncateContent(assistant.content()));
+            sb.append("[Assistant]: ").append(sanitizeText(assistant.content()));
             if (!assistant.toolCalls().isEmpty()) {
                 sb.append(" [Called tools: ");
-                for (var tc : assistant.toolCalls()) {
-                    sb.append(tc.name()).append("(");
+                for (ToolCall tc : assistant.toolCalls()) {
                     // ToolCall 只保存工具名，不暴露完整参数
-                    sb.append("...");
+                    sb.append(tc.name()).append("(...");
+                    // 只展示必要业务语义：参数名列表
+                    if (!tc.arguments().isEmpty()) {
+                        sb.append(" args: ");
+                        sb.append(tc.arguments().keySet());
+                    }
                     sb.append(")");
                 }
                 sb.append("]");
             }
             return sb.toString();
         } else if (msg instanceof ToolAgentMessage tool) {
-            // ToolResult 使用脱敏器处理内容
-            String safeContent = sanitizeContent(tool.content());
-            return "[ToolResult(" + tool.toolName() + "): "
-                    + truncateContent(safeContent) + "]";
-        } else if (msg instanceof com.ksyun.agent.core.message.SummaryAgentMessage summary) {
-            return "[PreviousSummary]: " + truncateContent(summary.content());
-        } else if (msg instanceof com.ksyun.agent.core.message.SystemAgentMessage system) {
-            // 系统消息不应出现在源消息中，但安全处理
-            return "[System]: " + truncateContent(system.content());
+            String safeContent = sanitizeText(tool.content());
+            return "[ToolResult(" + tool.toolName() + "): " + safeContent + "]";
+        } else if (msg instanceof SummaryAgentMessage summary) {
+            return "[PreviousSummary]: " + sanitizeText(summary.content());
+        } else if (msg instanceof SystemAgentMessage system) {
+            // 系统消息不应出现在源消息中（selector 保证），但安全处理
+            return "[System]: " + sanitizeText(system.content());
         } else {
             return "[Unknown]: (unsupported message type)";
         }
     }
 
-    private String truncateContent(String content) {
-        if (content == null) {
+    /**
+     * 对文本正文进行统一脱敏。
+     * <p>
+     * 使用 SensitiveValueSanitizer 处理。
+     * 不仅依赖 Map 字段名，还对文本正文中的常见敏感内容模式进行脱敏。
+     * 不得把密码、token、API Key、sessionId、Bearer Token 发送给模型。
+     */
+    private String sanitizeText(String content) {
+        if (content == null || content.isEmpty()) {
             return "<empty>";
         }
-        // 截断过长内容，避免发送过多文本给摘要模型
-        int maxLength = 500;
-        if (content.length() > maxLength) {
-            return content.substring(0, maxLength) + "...(truncated)";
-        }
-        return content;
-    }
-
-    /**
-     * 对消息内容进行脱敏处理。
-     * <p>
-     * 使用注入的 SensitiveValueSanitizer 对可能包含敏感值的文本进行脱敏。
-     * 由于 sanitizer 接口设计为处理 Map<String, Object> 参数，
-     * 此处对纯文本内容做简单脱敏标记。
-     */
-    private String sanitizeContent(String content) {
-        if (content == null || content.isEmpty()) {
-            return content;
-        }
-        // 使用脱敏器对文本中的敏感值进行替换
-        // 将文本放入 Map，通过 sanitizer 处理后提取脱敏结果
-        Map<String, Object> contentMap = java.util.Map.of("content", content);
+        // 1. 使用注入的 sanitizer 对文本进行脱敏（基于 Map key）
+        Map<String, Object> contentMap = Map.of("content", content);
         Map<String, Object> sanitized = sanitizer.sanitize(contentMap);
         Object result = sanitized.get("content");
-        return result instanceof String s ? s : content;
+        String text = result instanceof String s ? s : content;
+
+        // 2. 对文本正文中的常见敏感内容模式进行额外脱敏
+        // Bearer Token 模式
+        text = text.replaceAll("Bearer\\s+[A-Za-z0-9\\-_.~+/]+=*", "Bearer ***");
+        // API Key 前缀模式
+        text = text.replaceAll("(?i)(api[_\\-]?key|apikey|secret[_\\-]?key|access[_\\-]?key)\\s*[:=]\\s*[A-Za-z0-9\\-_.~+/]{8,}",
+                "$1: ***");
+        // Session/Token ID 模式
+        text = text.replaceAll("(?i)(session[_\\-]?id|token|auth[_\\-]?token|refresh[_\\-]?token)\\s*[:=]\\s*[A-Za-z0-9\\-_.~+/]{8,}",
+                "$1: ***");
+        // Password 模式
+        text = text.replaceAll("(?i)(password|passwd|pwd|credential[_\\-]?hash)\\s*[:=]\\s*\\S+",
+                "$1: ***");
+
+        return text;
     }
 }

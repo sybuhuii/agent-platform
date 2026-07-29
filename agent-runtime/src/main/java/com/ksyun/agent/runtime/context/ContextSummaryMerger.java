@@ -4,7 +4,6 @@ import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.SummaryAgentMessage;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -12,20 +11,17 @@ import java.util.Objects;
  * 摘要合并器，纯 Java 实现。
  * <p>
  * 规则：
- * 1. 删除 selection.sourceMessages
- * 2. 删除旧 SummaryAgentMessage
- * 3. 在 insertionIndex 插入新摘要
- * 4. 保留全部 retainedMessages
- * 5. 原始 System 消息保持原始相对顺序
- * 6. 最近原文消息保持原始相对顺序
- * 7. 最终最多存在一条摘要
- * 8. 不得产生重复消息
- * 9. 不得产生孤立 ToolAgentMessage
- * 10. 合并结果须由调用方再次通过 ContextMessageHistoryValidator（Pipeline 已实现）
- * 11. 返回不可变列表
- * 12. 不得修改原列表
- * 13. 不得使用消息 content 相等判断对象是否应被删除
- * 14. 必须使用选择结果中的确定下标或对象身份语义
+ * 1. 删除 selection.sourceMessages 和旧 SummaryAgentMessage
+ * 2. 用一条新 SummaryAgentMessage 替换被摘要的旧消息和旧摘要
+ * 3. 在 selection.insertionIndex 插入新摘要
+ * 4. 保留 System 和未摘要消息的原始全局相对顺序
+ * 5. 禁止把所有 System 消息统一移动到新摘要之前
+ * 6. 最终最多存在一条 SummaryAgentMessage
+ * 7. 不得把 Summary 插入未完成的工具调用组
+ * 8. 合并完成后必须经过现有消息结构校验器验证
+ * 9. 返回 List.copyOf 做防御性复制
+ * 10. 不得修改原列表
+ * 11. 不得使用消息 content 相等判断对象是否应被删除
  * <p>
  * 约束：
  * - 不调用模型
@@ -33,63 +29,83 @@ import java.util.Objects;
  */
 public class ContextSummaryMerger {
 
-    private static final int NOT_FOUND = -1;
+    private final ContextMessageHistoryValidator validator;
+
+    public ContextSummaryMerger(ContextMessageHistoryValidator validator) {
+        this.validator = Objects.requireNonNull(validator);
+    }
 
     /**
      * 将选择结果与新摘要合并成最终消息列表。
      *
-     * @param selection 摘要源选择结果
-     * @param summary   新生成的摘要消息
+     * @param originalMessages 原始完整消息列表
+     * @param selection        摘要源选择结果
+     * @param summary          新生成的摘要消息
      * @return 合并后的不可变消息列表
      */
-    public List<AgentMessage> merge(ContextSummarySelection selection, SummaryAgentMessage summary) {
+    public List<AgentMessage> merge(List<AgentMessage> originalMessages,
+                                     ContextSummarySelection selection,
+                                     SummaryAgentMessage summary) {
+        Objects.requireNonNull(originalMessages, "originalMessages must not be null");
         Objects.requireNonNull(selection, "selection must not be null");
         Objects.requireNonNull(summary, "summary must not be null");
 
         if (!selection.hasSource()) {
-            // 没有源消息，直接返回原始列表（retained + 旧摘要如果有的话）
-            // 但这种情况不应发生，因为 Pipeline 在调用前会检查 hasSource()
-            return Collections.unmodifiableList(selection.retainedMessages());
+            return List.copyOf(originalMessages);
         }
 
-        List<AgentMessage> result = new ArrayList<>();
-
-        // 基于 retainedMessages 和 insertionIndex 构建结果
-        // retainedMessages 包含 System 消息和保留的最近 content 组
-        // 插入位置：System 消息之后，content 消息之前
-
-        List<AgentMessage> retained = selection.retainedMessages();
-
-        // insertionIndex 指的是在原始消息列表中的位置
-        // 我们需要将摘要插入到 retainedMessages 中的正确位置
-        // 策略：在第一条非 System 的 retained 消息之前插入摘要
-
-        int insertionPointInRetained = 0;
-        for (int i = 0; i < retained.size(); i++) {
-            if (!(retained.get(i) instanceof com.ksyun.agent.core.message.SystemAgentMessage)) {
-                insertionPointInRetained = i;
-                break;
+        // 构建需要删除的消息索引集合（基于原始消息索引）
+        // sourceMessages 中的所有消息需要删除
+        java.util.Set<Integer> removedIndices = new java.util.HashSet<>();
+        for (AgentMessage srcMsg : selection.sourceMessages()) {
+            int idx = originalMessages.indexOf(srcMsg);
+            if (idx >= 0) {
+                removedIndices.add(idx);
             }
-            insertionPointInRetained = i + 1;
         }
 
-        // 插入 System 消息
-        for (int i = 0; i < insertionPointInRetained; i++) {
-            result.add(retained.get(i));
+        // insertionIndex 是在原始消息列表中的位置
+        int insertionIndex = selection.insertionIndex();
+        if (insertionIndex < 0) {
+            insertionIndex = 0;
+        }
+        if (insertionIndex > originalMessages.size()) {
+            insertionIndex = originalMessages.size();
         }
 
-        // 插入新摘要
-        result.add(summary);
+        // 按原始全局顺序构建结果
+        List<AgentMessage> result = new ArrayList<>();
+        boolean summaryInserted = false;
 
-        // 插入剩余的 retained 消息
-        for (int i = insertionPointInRetained; i < retained.size(); i++) {
-            // 跳过旧摘要（retained 中不应包含旧摘要，但安全检查）
-            if (retained.get(i) instanceof SummaryAgentMessage) {
+        for (int i = 0; i < originalMessages.size(); i++) {
+            // 在 insertionIndex 处插入新摘要
+            if (i == insertionIndex && !summaryInserted) {
+                result.add(summary);
+                summaryInserted = true;
+            }
+
+            // 跳过被删除的消息
+            if (removedIndices.contains(i)) {
                 continue;
             }
-            result.add(retained.get(i));
+
+            // 跳过旧摘要（由 selection 中的 sourceMessages 已包含，但防御性检查）
+            AgentMessage msg = originalMessages.get(i);
+            if (msg instanceof SummaryAgentMessage) {
+                continue;
+            }
+
+            result.add(msg);
         }
 
-        return Collections.unmodifiableList(result);
+        // 如果 insertionIndex 在末尾，追加摘要
+        if (!summaryInserted) {
+            result.add(summary);
+        }
+
+        // 合并完成后验证消息结构
+        validator.validate(result);
+
+        return List.copyOf(result);
     }
 }

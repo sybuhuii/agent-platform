@@ -9,10 +9,13 @@ import com.ksyun.agent.core.message.SystemAgentMessage;
 import com.ksyun.agent.core.message.ToolAgentMessage;
 import com.ksyun.agent.core.tool.ToolCall;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -31,6 +34,8 @@ import java.util.Set;
  * 6. 同一 ToolCall ID 在多个 Assistant 消息中重复
  * 7. 工具交互尚未结束就出现下一条普通对话消息
  * 8. 消息集合中存在 null 元素
+ * 9. ToolResult 的 toolName 必须与对应 ToolCall 名称精确匹配
+ * 10. ToolResult 必须紧跟对应 Assistant ToolCall 组，之间不得插入 User/System/普通Assistant/另一个带ToolCall的Assistant
  * <p>
  * 约束：
  * - 不得静默删除孤立 Tool 消息
@@ -67,9 +72,8 @@ public class ContextMessageHistoryValidator {
 
         // 摘要校验规则：
         // 1. 上下文中最多存在一条 SummaryAgentMessage
-        // 2. 摘要 content 不能为空（由 SummaryAgentMessage 构造器保证）
-        // 3. 摘要不得位于未完成的工具交互内部
-        // 4. 摘要不得作为 ToolResult
+        // 2. 摘要不得位于未完成的工具交互内部
+        // 3. 摘要不得作为 ToolResult
         int summaryCount = 0;
         for (int i = 0; i < messages.size(); i++) {
             AgentMessage msg = messages.get(i);
@@ -83,34 +87,39 @@ public class ContextMessageHistoryValidator {
             }
         }
 
-        // 建立 toolCallId -> 首次出现的 Assistant 索引
-        Map<String, Integer> toolCallIdToAssistantIndex = new HashMap<>();
-        // 检查 4：ToolCall ID 为空
-        // 检查 6：同一 ToolCall ID 在多个 Assistant 消息中重复
+        // 建立 toolCallId -> ToolCall 信息（含 assistantIndex 和 toolName）
+        Map<String, ToolCallInfo> toolCallInfoMap = new LinkedHashMap<>();
+
+        // 第一遍：收集所有 ToolCall 声明
         for (int i = 0; i < messages.size(); i++) {
             AgentMessage msg = messages.get(i);
             if (msg instanceof AssistantAgentMessage assistant) {
                 for (ToolCall tc : assistant.toolCalls()) {
+                    // 检查 4：ToolCall ID 为空
                     if (tc.id() == null || tc.id().isBlank()) {
                         throw new AgentFrameworkException(
                                 AgentErrorCode.INVALID_MESSAGE_HISTORY,
                                 "ToolCall ID is blank at message index " + i);
                     }
-                    Integer prevIndex = toolCallIdToAssistantIndex.putIfAbsent(tc.id(), i);
-                    if (prevIndex != null && prevIndex != i) {
+                    // 检查 6：同一 ToolCall ID 在多个 Assistant 消息中重复
+                    ToolCallInfo prev = toolCallInfoMap.putIfAbsent(tc.id(),
+                            new ToolCallInfo(i, tc.name()));
+                    if (prev != null && prev.assistantIndex != i) {
                         throw new AgentFrameworkException(
                                 AgentErrorCode.INVALID_MESSAGE_HISTORY,
                                 "Duplicate ToolCall ID '" + shortenId(tc.id())
                                         + "' found at message index " + i
-                                        + ", previously declared at index " + prevIndex);
+                                        + ", previously declared at index " + prev.assistantIndex);
                     }
                 }
             }
         }
 
+        // 第二遍：校验 ToolResult
         // 检查 5：ToolAgentMessage 关联 ID 为空
         // 检查 1：ToolAgentMessage 找不到对应 Assistant ToolCall
         // 检查 3：相同 ToolCall ID 出现多个结果
+        // 检查 9：ToolResult 的 toolName 必须与对应 ToolCall 名称精确匹配
         Map<String, Integer> toolCallIdToToolResultIndex = new HashMap<>();
         for (int i = 0; i < messages.size(); i++) {
             AgentMessage msg = messages.get(i);
@@ -120,10 +129,20 @@ public class ContextMessageHistoryValidator {
                             AgentErrorCode.INVALID_MESSAGE_HISTORY,
                             "ToolAgentMessage at index " + i + " has blank toolCallId");
                 }
-                if (!toolCallIdToAssistantIndex.containsKey(tool.toolCallId())) {
+                ToolCallInfo callInfo = toolCallInfoMap.get(tool.toolCallId());
+                if (callInfo == null) {
                     throw new AgentFrameworkException(
                             AgentErrorCode.TOOL_MESSAGE_PAIRING_FAILED,
                             "ToolAgentMessage at index " + i + " references unknown ToolCall ID '"
+                                    + shortenId(tool.toolCallId()) + "'");
+                }
+                // 检查 9：toolName 精确匹配
+                if (!callInfo.toolName.equals(tool.toolName())) {
+                    throw new AgentFrameworkException(
+                            AgentErrorCode.TOOL_MESSAGE_PAIRING_FAILED,
+                            "ToolAgentMessage at index " + i + " has toolName '"
+                                    + tool.toolName() + "' but expected '"
+                                    + callInfo.toolName + "' for ToolCall ID '"
                                     + shortenId(tool.toolCallId()) + "'");
                 }
                 Integer prevResultIndex = toolCallIdToToolResultIndex.putIfAbsent(tool.toolCallId(), i);
@@ -138,38 +157,49 @@ public class ContextMessageHistoryValidator {
         }
 
         // 检查 7：工具交互尚未结束就出现下一条普通对话消息
-        // 检查 2：Assistant 声明的 ToolCall 缺少 ToolAgentMessage
+        // 检查 10：ToolResult 必须紧跟对应 Assistant ToolCall 组
         Set<String> pendingToolCallIds = new HashSet<>();
+        int lastAssistantWithToolCallIndex = -1;
+
         for (int i = 0; i < messages.size(); i++) {
             AgentMessage msg = messages.get(i);
 
             if (msg instanceof AssistantAgentMessage assistant && !assistant.toolCalls().isEmpty()) {
-                // 开始新的工具交互，收集 ToolCall IDs
+                // 如果有未完成的工具交互，新带ToolCall的Assistant出现，检查是否合法
+                // 如果之前的工具交互还没完成，这是一个非法结构
+                if (!pendingToolCallIds.isEmpty()) {
+                    throw new AgentFrameworkException(
+                            AgentErrorCode.TOOL_MESSAGE_PAIRING_FAILED,
+                            "Assistant with ToolCall at index " + i
+                                    + " appears while " + pendingToolCallIds.size()
+                                    + " previous ToolCall result(s) are still pending");
+                }
+                // 开始新的工具交互
                 for (ToolCall tc : assistant.toolCalls()) {
                     pendingToolCallIds.add(tc.id());
                 }
+                lastAssistantWithToolCallIndex = i;
             } else if (msg instanceof ToolAgentMessage tool) {
                 // Tool 结果，从 pending 中移除
                 pendingToolCallIds.remove(tool.toolCallId());
+            } else if (msg instanceof SystemAgentMessage || msg instanceof SummaryAgentMessage) {
+                // System 和 Summary 消息不中断工具交互检查流程
+                continue;
             } else {
-                // 普通消息（User、无 ToolCall 的 Assistant、System、Summary）
-                // 如果是 System 或 Summary 消息，不视为中断工具交互
-                if (msg instanceof SystemAgentMessage || msg instanceof SummaryAgentMessage) {
-                    // System 和 Summary 消息不中断工具交互检查流程
-                    continue;
-                }
+                // 普通消息（User、无 ToolCall 的 Assistant）
                 // 非系统普通消息出现时，pending 必须为空
                 if (!pendingToolCallIds.isEmpty()) {
                     throw new AgentFrameworkException(
                             AgentErrorCode.TOOL_MESSAGE_PAIRING_FAILED,
                             "Non-tool message at index " + i
+                                    + " (" + msg.getClass().getSimpleName() + ")"
                                     + " interrupts incomplete tool interaction"
                                     + " (" + pendingToolCallIds.size() + " pending ToolCall result(s))");
                 }
             }
         }
 
-        // 最终检查：所有声明的 ToolCall 都应该有结果
+        // 检查 2：Assistant 声明的 ToolCall 缺少 ToolAgentMessage
         for (int i = 0; i < messages.size(); i++) {
             AgentMessage msg = messages.get(i);
             if (msg instanceof AssistantAgentMessage assistant) {
@@ -195,5 +225,11 @@ public class ContextMessageHistoryValidator {
             return "<null>";
         }
         return id.length() <= 8 ? id : id.substring(0, 8) + "...";
+    }
+
+    /**
+     * ToolCall 信息记录，用于校验。
+     */
+    private record ToolCallInfo(int assistantIndex, String toolName) {
     }
 }

@@ -27,6 +27,6 @@ public record ContextWindowUpdate(
     public ContextWindowUpdate {
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         Objects.requireNonNull(trace, "trace must not be null");
-        modelMessages = Collections.unmodifiableList(snapshot.windowMessages());
+        modelMessages = List.copyOf(snapshot.windowMessages());
     }
 }

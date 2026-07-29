@@ -10,7 +10,7 @@ import java.util.Objects;
  * <p>
  * 约束：
  * - messages 不可变
- * - 至少启用一种裁剪策略
+ * - 至少启用一种裁剪策略，或两个开关均关闭（表示无需裁剪）
  * - maxMessages 仅在消息数裁剪启用时必须 > 0
  * - tokenBudget 仅在 Token 裁剪启用时必须存在
  * - summaryOptions 为摘要处理所需配置
@@ -18,6 +18,7 @@ import java.util.Objects;
  * - 不得允许调用者提交 Token 统计结果
  * - 提供清晰工厂方法，避免构造参数顺序错误
  * - 不使用 Builder 引入大量可选 null 字段
+ * - 两个裁剪开关均关闭时允许创建"无需裁剪"请求，不得静默篡改配置
  */
 public record ContextProcessingRequest(
         List<AgentMessage> messages,
@@ -32,17 +33,19 @@ public record ContextProcessingRequest(
     public ContextProcessingRequest {
         Objects.requireNonNull(messages, "messages must not be null");
 
-        if (!messageCountTrimmingEnabled && !tokenTrimmingEnabled) {
-            throw new IllegalArgumentException(
-                    "At least one trimming strategy must be enabled");
-        }
+        // summaryOptions 默认值
+        summaryOptions = summaryOptions == null ? ContextSummaryOptions.disabled() : summaryOptions;
+        messages = List.copyOf(messages);
 
-        if (messageCountTrimmingEnabled && maxMessages <= 0) {
+        // 两个开关均关闭时（无需裁剪），不校验 maxMessages 和 tokenBudget 的严格条件
+        boolean noTrimming = !messageCountTrimmingEnabled && !tokenTrimmingEnabled;
+
+        if (!noTrimming && messageCountTrimmingEnabled && maxMessages <= 0) {
             throw new IllegalArgumentException(
                     "maxMessages must be > 0 when message count trimming is enabled, got: " + maxMessages);
         }
 
-        if (tokenTrimmingEnabled) {
+        if (!noTrimming && tokenTrimmingEnabled) {
             Objects.requireNonNull(tokenBudget,
                     "tokenBudget must not be null when token trimming is enabled");
             if (additionalReservedTokens < 0) {
@@ -55,11 +58,16 @@ public record ContextProcessingRequest(
                         "effective message budget must be > 0 when token trimming is enabled");
             }
         }
+    }
 
-        // summaryOptions 默认值
-        summaryOptions = summaryOptions == null ? ContextSummaryOptions.disabled() : summaryOptions;
-
-        messages = List.copyOf(messages);
+    /**
+     * 创建无需裁剪的请求（两个开关均关闭）。
+     * <p>
+     * Pipeline 收到此请求时应直接返回原始消息，不做裁剪。
+     */
+    public static ContextProcessingRequest noTrimming(List<AgentMessage> messages) {
+        return new ContextProcessingRequest(messages, Integer.MAX_VALUE, null, 0,
+                false, false, null);
     }
 
     /**
@@ -123,5 +131,12 @@ public record ContextProcessingRequest(
      */
     public boolean summaryEnabled() {
         return summaryOptions != null && summaryOptions.summaryEnabled();
+    }
+
+    /**
+     * 判断是否无需裁剪。
+     */
+    public boolean noTrimmingRequired() {
+        return !messageCountTrimmingEnabled && !tokenTrimmingEnabled;
     }
 }

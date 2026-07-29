@@ -3,6 +3,7 @@ package com.ksyun.agent.runtime.context;
 import com.ksyun.agent.core.context.TokenCounter;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.AssistantAgentMessage;
+import com.ksyun.agent.core.message.SummaryAgentMessage;
 import com.ksyun.agent.core.message.SystemAgentMessage;
 import com.ksyun.agent.core.message.ToolAgentMessage;
 import com.ksyun.agent.core.message.UserAgentMessage;
@@ -85,6 +86,10 @@ public class HeuristicTokenCounter implements TokenCounter {
             if (tool.error()) {
                 tokens += ERROR_OVERHEAD;
             }
+        } else if (message instanceof SummaryAgentMessage summary) {
+            // SummaryAgentMessage 使用与其他文本消息相同的文本 Token 估算方式
+            // 不得使用反射、Object 分派或把 Summary 强制转换为 System
+            tokens += estimateTextTokens(summary.content());
         }
 
         return tokens;

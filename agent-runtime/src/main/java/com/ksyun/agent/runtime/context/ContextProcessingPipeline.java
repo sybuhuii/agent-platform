@@ -90,6 +90,31 @@ public class ContextProcessingPipeline {
     public ContextProcessingResult process(ContextProcessingRequest request) {
         Objects.requireNonNull(request, "request must not be null");
 
+        // 两个裁剪开关均关闭时，直接返回原始消息
+        if (request.noTrimmingRequired()) {
+            List<AgentMessage> messages = request.messages();
+            long originalTokenCount = countTokens(messages);
+            return new ContextProcessingResult(
+                    messages,
+                    messages.size(),
+                    messages.size(),
+                    0,
+                    originalTokenCount,
+                    originalTokenCount,
+                    0,
+                    false,
+                    false,
+                    false,
+                    false,
+                    0,
+                    0,
+                    0,
+                    false,
+                    true,
+                    Set.of()
+            );
+        }
+
         List<AgentMessage> currentMessages = request.messages();
         // 保留原始不可变消息快照，用于摘要失败时回退
         List<AgentMessage> originalSnapshot = List.copyOf(currentMessages);
@@ -151,10 +176,11 @@ public class ContextProcessingPipeline {
 
                     if (!selection.hasSource()) {
                         // 没有可摘要旧消息
-                        allDiagnostics.add(ContextTrimDiagnostic.SUMMARY_SKIPPED_NO_SOURCE);
-                    } else if (selection.sourceTokenCount() < summaryOptions.summaryMinSourceTokens()) {
-                        // 源 Token 太少
-                        allDiagnostics.add(ContextTrimDiagnostic.SUMMARY_SKIPPED_SOURCE_TOO_SMALL);
+                        if (selection.isSourceTooSmall()) {
+                            allDiagnostics.add(ContextTrimDiagnostic.SUMMARY_SKIPPED_SOURCE_TOO_SMALL);
+                        } else {
+                            allDiagnostics.add(ContextTrimDiagnostic.SUMMARY_SKIPPED_NO_SOURCE);
+                        }
                     } else {
                         // 存在源且摘要器可用，调用 LLM 摘要
                         try {
@@ -167,7 +193,7 @@ public class ContextProcessingPipeline {
                             ContextSummaryResult summaryResult = summarizer.get().summarize(summaryRequest);
 
                             // 摘要成功，用摘要替换旧消息
-                            currentMessages = summaryMerger.merge(selection, summaryResult.summaryMessage());
+                            currentMessages = summaryMerger.merge(currentMessages, selection, summaryResult.summaryMessage());
                             summaryApplied = true;
                             summarizedMessageCount = selection.sourceMessageCount();
                             summarySourceTokenCount = selection.sourceTokenCount();

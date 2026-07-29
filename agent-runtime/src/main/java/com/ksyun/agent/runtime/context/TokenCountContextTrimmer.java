@@ -28,17 +28,16 @@ import java.util.Set;
  * 2. 验证消息历史
  * 3. 将消息划分为原子组
  * 4. 计算全部消息原始 Token 数
- * 5. 提取全部 System 组
+ * 5. 提取全部 System 组（永久保留）
  * 6. 计算 System 组 Token 总量
  * 7. 计算有效消息预算
- * 8. System 组永久保留
- * 9. 标记最后 User 消息所在组为 mandatory
- * 10. 从最后一个非 System 原子组向前选择
- * 11. 每次只能选择完整原子组
- * 12. 加入后不超过有效预算才保留
- * 13. 最终按原始消息下标恢复顺序
- * 14. 计算裁剪后 Token 数
- * 15. 确认结果不超过有效预算
+ * 8. 最新 User 所在组及其后的所有组为 mandatory
+ * 9. 从旧到新选择可放入预算的非 mandatory 组
+ * 10. 每次只能选择完整原子组
+ * 11. 加入后不超过有效预算才保留
+ * 12. 最终按原始消息下标恢复顺序
+ * 13. 最终 Token 重新计数
+ * 14. 确认结果不超过有效预算
  * <p>
  * Token 预算属于硬上限：
  * - 不得使用 Token overshoot
@@ -52,6 +51,7 @@ import java.util.Set;
  * - 不持有 Session、ModelClient、Registry 或 Gateway
  * - 不修改输入消息列表
  * - 只使用注入的 TokenCounter，不得自己实现第二套字符估算
+ * - TokenCounter 不得为 null
  * - 线程安全、无状态
  */
 public class TokenCountContextTrimmer implements ContextTrimmer {
@@ -142,7 +142,7 @@ public class TokenCountContextTrimmer implements ContextTrimmer {
                             + ") exceeds effective message budget (" + effectiveBudget + ")");
         }
 
-        // 7. 识别最后一条 UserAgentMessage 及其所在组（在其他组中查找）
+        // 7. 识别最新 User 所在组及其后的所有组为 mandatory
         int latestUserGroupIndexInOther = -1;
         for (int gi = otherGroups.size() - 1; gi >= 0; gi--) {
             ContextMessageGroup group = otherGroups.get(gi);
@@ -159,38 +159,25 @@ public class TokenCountContextTrimmer implements ContextTrimmer {
         Set<ContextTrimDiagnostic> diagnostics = new LinkedHashSet<>();
         diagnostics.add(ContextTrimDiagnostic.SYSTEM_MESSAGES_PRESERVED);
 
-        // 标记 mandatory 组
+        // 标记 mandatory 组：最新 User 所在组及其后的所有组
         Set<Integer> mandatoryGroupIndices = new LinkedHashSet<>();
-        // 强制保留上下文 = System 组 + Summary 组 + 最新用户组及其后续工具组
-        // System 和 Summary 都属于强制保留上下文
-        // 但 System 优先级高于 Summary：摘要+System+最新用户超过预算时先明确失败
-        long mandatoryTokens = systemTokens + summaryTokens;
+        long mandatoryNonSystemNonSummaryTokens = 0;
 
-        // 最后 User 消息所在组为 mandatory
         if (latestUserGroupIndexInOther >= 0) {
-            mandatoryGroupIndices.add(latestUserGroupIndexInOther);
-            mandatoryTokens += countTokens(otherGroups.get(latestUserGroupIndexInOther).messages());
-        }
-
-        // 如果最新用户消息之后存在不能拆分的当前轮工具组，纳入 mandatory
-        if (latestUserGroupIndexInOther >= 0) {
-            for (int gi = latestUserGroupIndexInOther + 1; gi < otherGroups.size(); gi++) {
-                ContextMessageGroup group = otherGroups.get(gi);
-                if (group.groupType() == ContextMessageGroupType.TOOL_INTERACTION) {
-                    mandatoryGroupIndices.add(gi);
-                    mandatoryTokens += countTokens(group.messages());
-                } else {
-                    // 非 Tool 组出现，后续不再强制包含
-                    break;
-                }
+            // 最新 User 所在组及其后的所有组（包括工具组和普通组）都为 mandatory
+            for (int gi = latestUserGroupIndexInOther; gi < otherGroups.size(); gi++) {
+                mandatoryGroupIndices.add(gi);
+                mandatoryNonSystemNonSummaryTokens += countTokens(otherGroups.get(gi).messages());
             }
         }
 
-        // 如果没有 User 消息，不强制保留用户组（提示词第九节第9点）
+        // 强制保留上下文 = System + Summary + mandatory groups
+        long mandatoryTokens = systemTokens + summaryTokens + mandatoryNonSystemNonSummaryTokens;
+
+        // 如果没有 User 消息，不强制保留用户组
         // 选择算法从最新到最旧自然选择，仍会优先保留最新消息
 
         // 9. 强制上下文超过预算
-        // 摘要加 System 和最新用户消息超过预算时明确失败
         if (mandatoryTokens > effectiveBudget) {
             if (systemTokens >= effectiveBudget) {
                 throw new AgentFrameworkException(
@@ -198,35 +185,31 @@ public class TokenCountContextTrimmer implements ContextTrimmer {
                         "System messages token count (" + systemTokens
                                 + ") meets or exceeds effective message budget (" + effectiveBudget + ")");
             }
-            // System + Summary 超预算时也失败
-            if ((systemTokens + summaryTokens) >= effectiveBudget) {
-                throw new AgentFrameworkException(
-                        AgentErrorCode.CONTEXT_BUDGET_EXCEEDED,
-                        "System + Summary messages token count (" + (systemTokens + summaryTokens)
-                                + ") meets or exceeds effective message budget (" + effectiveBudget + ")");
-            }
+            diagnostics.add(ContextTrimDiagnostic.SYSTEM_TOKEN_BUDGET_EXCEEDED);
             diagnostics.add(ContextTrimDiagnostic.MANDATORY_CONTEXT_TOO_LARGE);
             throw new AgentFrameworkException(
                     AgentErrorCode.CONTEXT_BUDGET_EXCEEDED,
-                    "Mandatory context (System + Summary + latest user/tool) token count ("
+                    "Mandatory context (System + Summary + latest user and following groups) token count ("
                             + mandatoryTokens + ") exceeds effective message budget ("
                             + effectiveBudget + ")");
         }
 
-        // 10. 从最后一个其他组向前遍历，选择可放入预算的组
+        // 10. 从旧到新选择可放入预算的非 mandatory 组
         Set<Integer> selectedGroupIndices = new LinkedHashSet<>(mandatoryGroupIndices);
-        long selectedNonSystemNonSummaryTokens = mandatoryTokens - systemTokens - summaryTokens;
+        long selectedNonSystemNonSummaryTokens = mandatoryNonSystemNonSummaryTokens;
+        long budgetForNonSystemNonSummary = effectiveBudget - systemTokens - summaryTokens;
 
-        for (int gi = otherGroups.size() - 1; gi >= 0; gi--) {
-            if (selectedGroupIndices.contains(gi)) {
+        for (int gi = 0; gi < otherGroups.size(); gi++) {
+            if (mandatoryGroupIndices.contains(gi)) {
                 continue;
             }
 
             ContextMessageGroup group = otherGroups.get(gi);
             long groupTokens = countTokens(group.messages());
-            long projectedTokens = selectedNonSystemNonSummaryTokens + groupTokens;
 
-            if (projectedTokens <= (effectiveBudget - systemTokens - summaryTokens)) {
+            // 检查加入后是否超过预算
+            long projectedTokens = selectedNonSystemNonSummaryTokens + groupTokens;
+            if (projectedTokens <= budgetForNonSystemNonSummary) {
                 selectedGroupIndices.add(gi);
                 selectedNonSystemNonSummaryTokens = projectedTokens;
             } else {
@@ -243,15 +226,18 @@ public class TokenCountContextTrimmer implements ContextTrimmer {
         // 11. 按原始下标升序收集保留消息
         List<Integer> allRetainedIndices = new ArrayList<>();
         for (ContextMessageGroup sg : systemGroups) {
-            allRetainedIndices.add(sg.startIndex());
+            for (int idx = sg.startIndex(); idx <= sg.endIndex(); idx++) {
+                allRetainedIndices.add(idx);
+            }
         }
-        // Summary 组永久保留
         for (ContextMessageGroup smg : summaryGroups) {
             for (int idx = smg.startIndex(); idx <= smg.endIndex(); idx++) {
                 allRetainedIndices.add(idx);
             }
         }
-        for (int selGi : selectedGroupIndices) {
+        List<Integer> sortedSelected = new ArrayList<>(selectedGroupIndices);
+        sortedSelected.sort(Integer::compareTo);
+        for (int selGi : sortedSelected) {
             ContextMessageGroup ng = otherGroups.get(selGi);
             for (int idx = ng.startIndex(); idx <= ng.endIndex(); idx++) {
                 allRetainedIndices.add(idx);

@@ -26,15 +26,18 @@ import java.util.Objects;
  * - 保持无状态和线程安全
  * - 基础设施负责把配置值注入构造器
  * - 不得在不同 ReasonNode 构造不同默认预算
+ * - 两个裁剪开关均关闭时，不得静默篡改用户配置
+ * - 两个开关均关闭时，返回"无需裁剪"请求
+ * - 禁止为了绕过构造器校验而虚构裁剪开关
  */
 public class ContextProcessingRequestFactory {
 
-    private final int maxMessages;
-    private final ContextTokenBudget tokenBudget;
     private final boolean messageCountTrimmingEnabled;
+    private final int maxMessages;
     private final boolean tokenTrimmingEnabled;
-    private final ContextSummaryOptions summaryOptions;
+    private final ContextTokenBudget tokenBudget;
     private final int additionalReservedTokens;
+    private final ContextSummaryOptions summaryOptions;
 
     public ContextProcessingRequestFactory(
             boolean messageCountTrimmingEnabled,
@@ -53,16 +56,22 @@ public class ContextProcessingRequestFactory {
 
     /**
      * 为候选消息构造 ContextProcessingRequest。
+     * <p>
+     * 严格保留配置中的两个开关值：
+     * - 两个开关均关闭时，创建合法的"无需裁剪"请求
+     * - 不得静默篡改用户配置
+     * - 不得为了绕过构造器校验而虚构裁剪开关
      *
      * @param messages 候选消息列表
-     * @return 上下文处理请求
+     * @return 上下文处理请求，两个开关均关闭时返回"无需裁剪"请求
      */
     public ContextProcessingRequest create(List<AgentMessage> messages) {
         Objects.requireNonNull(messages, "messages must not be null");
 
         if (!messageCountTrimmingEnabled && !tokenTrimmingEnabled) {
-            // 至少启用一种裁剪策略，默认启用消息数
-            return ContextProcessingRequest.messageCountOnly(messages, maxMessages);
+            // 两个裁剪开关均关闭，严格保留配置语义
+            // 创建合法的"无需裁剪"请求
+            return ContextProcessingRequest.noTrimming(messages);
         }
 
         if (!tokenTrimmingEnabled) {

@@ -3,7 +3,6 @@ package com.ksyun.agent.runtime.context;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.SummaryAgentMessage;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -16,15 +15,10 @@ import java.util.Optional;
  * - retainedMessages 保持原始顺序，不可变
  * - existingSummary 使用 Optional
  * - sourceMessageCount 为 sourceMessages 的大小
- * - sourceTokenCount 为 sourceMessages 的 Token 数
- * - sourceGroupCount 为摘要源中原子组数量
- * - firstSourceIndex 为第一条源消息在原始列表中的下标
- * - insertionIndex 为摘要插入位置的下标
- * - 不得修改原列表
- * - 不得根据 content 文本判断消息角色
- * - 不得根据工具名称进行配对
- * - 相同输入必须得到相同选择结果
- * - 不得使用 HashSet 无序迭代决定结果
+ * - sourceTokenCount 由 TokenCounter 计算
+ * - firstSourceIndex 基于原始消息索引
+ * - insertionIndex 基于原始消息索引
+ * - skipReason 区分"没有源"和"源太少"
  */
 public record ContextSummarySelection(
         List<AgentMessage> sourceMessages,
@@ -34,15 +28,17 @@ public record ContextSummarySelection(
         int sourceTokenCount,
         int sourceGroupCount,
         int firstSourceIndex,
-        int insertionIndex
+        int insertionIndex,
+        ContextSummarySelector.SkipReason skipReason
 ) {
 
     public ContextSummarySelection {
         Objects.requireNonNull(sourceMessages, "sourceMessages must not be null");
         Objects.requireNonNull(retainedMessages, "retainedMessages must not be null");
-        sourceMessages = Collections.unmodifiableList(sourceMessages);
-        retainedMessages = Collections.unmodifiableList(retainedMessages);
-        existingSummary = existingSummary == null ? Optional.empty() : existingSummary;
+        Objects.requireNonNull(existingSummary, "existingSummary must not be null");
+        Objects.requireNonNull(skipReason, "skipReason must not be null");
+        sourceMessages = List.copyOf(sourceMessages);
+        retainedMessages = List.copyOf(retainedMessages);
         if (sourceMessageCount < 0) {
             throw new IllegalArgumentException(
                     "sourceMessageCount must be >= 0, got: " + sourceMessageCount);
@@ -62,5 +58,19 @@ public record ContextSummarySelection(
      */
     public boolean hasSource() {
         return !sourceMessages.isEmpty();
+    }
+
+    /**
+     * 判断是否因源 Token 太少而跳过。
+     */
+    public boolean isSourceTooSmall() {
+        return skipReason == ContextSummarySelector.SkipReason.SOURCE_TOO_SMALL;
+    }
+
+    /**
+     * 判断是否因没有可摘要源而跳过。
+     */
+    public boolean isNoSource() {
+        return skipReason == ContextSummarySelector.SkipReason.NO_SOURCE && !hasSource();
     }
 }

@@ -37,7 +37,7 @@ public record ContextWindowSnapshot(
         Objects.requireNonNull(windowMessages, "windowMessages must not be null");
         Objects.requireNonNull(latestTrace, "latestTrace must not be null");
         Objects.requireNonNull(updatedAt, "updatedAt must not be null");
-        windowMessages = Collections.unmodifiableList(windowMessages);
+        windowMessages = List.copyOf(windowMessages);
         if (consumedHistoryMessageCount < 0) {
             throw new IllegalArgumentException(
                     "consumedHistoryMessageCount must be >= 0, got: " + consumedHistoryMessageCount);

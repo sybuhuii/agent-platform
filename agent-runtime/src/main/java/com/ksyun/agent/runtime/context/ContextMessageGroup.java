@@ -38,6 +38,6 @@ public record ContextMessageGroup(
             throw new IllegalArgumentException(
                     "invalid index range: startIndex=" + startIndex + ", endIndex=" + endIndex);
         }
-        messages = Collections.unmodifiableList(messages);
+        messages = List.copyOf(messages);
     }
 }

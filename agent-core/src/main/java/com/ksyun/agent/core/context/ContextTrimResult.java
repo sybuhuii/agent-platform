@@ -2,7 +2,6 @@ package com.ksyun.agent.core.context;
 
 import com.ksyun.agent.core.message.AgentMessage;
 
-import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -49,8 +48,8 @@ public record ContextTrimResult(
     public ContextTrimResult {
         Objects.requireNonNull(retainedMessages, "retainedMessages must not be null");
         Objects.requireNonNull(diagnostics, "diagnostics must not be null");
-        retainedMessages = Collections.unmodifiableList(retainedMessages);
-        diagnostics = Collections.unmodifiableSet(new LinkedHashSet<>(diagnostics));
+        retainedMessages = List.copyOf(retainedMessages);
+        diagnostics = Set.copyOf(new LinkedHashSet<>(diagnostics));
         if (removedMessageCount < 0) {
             throw new IllegalArgumentException("removedMessageCount must be >= 0, got: " + removedMessageCount);
         }

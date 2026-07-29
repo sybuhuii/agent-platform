@@ -27,24 +27,15 @@ import java.util.Set;
  * 2. 验证消息历史合法性
  * 3. 将消息划分为原子组
  * 4. 全部 SYSTEM 组永久保留（不计入 maxMessages）
- * 5. 从最后一个非 SYSTEM 组开始向前选择完整原子组
- * 6. 直到非 System 消息数量达到 maxMessages 目标
- * 7. 不得拆分 TOOL_INTERACTION 组
- * 8. 完成选择后按原始下标升序输出
- * 9. 最新用户输入保护
- * 10. atomicGroupOvershoot 记录超限数量
+ * 5. 全部 SUMMARY 组永久保留（不计入 maxMessages）
+ * 6. 识别最新 User 所在组及其后的所有组为 mandatory groups
+ * 7. 从旧到新删除非 mandatory 非 System/Summary 组，直到满足消息数预算
+ * 8. 不得拆分 TOOL_INTERACTION 组
+ * 9. 如果为了保持原子组而略微超过 maxMessages，记录 ATOMIC_GROUP_OVERSHOOT
+ * 10. 完成选择后按原始下标升序输出
+ * 11. 最新用户输入保护
  * <p>
- * maxMessages 只统计非 System 消息。
- * <p>
- * 普通情况：保留最近不超过 maxMessages 条非 System 消息。
- * <p>
- * 原子组边界情况：
- * - 加入某个 TOOL_INTERACTION 组会超过 maxMessages 时，不得只保留其中一部分
- * - 如果已经选择了更新的消息组，则默认不再选择这个超限旧组
- * - 如果最新的非 System 组本身就超过 maxMessages，为保证最新交互完整，仍保留整个最新组
- * - 这种情况记录 atomicGroupOvershoot
- * - 除最新原子组无法拆分的情况外，不应超过目标
- * - 不得为了严格满足数量而破坏工具消息配对
+ * maxMessages 只统计非 System 非 Summary 消息。
  * <p>
  * 约束：
  * - 不依赖 Spring 容器
@@ -54,6 +45,7 @@ import java.util.Set;
  * - 不产生幻觉内容
  * - 裁剪结果保持原始消息顺序
  * - 线程安全、无状态
+ * - TokenCounter 不得为 null
  */
 public class MessageCountContextTrimmer implements ContextTrimmer {
 
@@ -63,23 +55,12 @@ public class MessageCountContextTrimmer implements ContextTrimmer {
     private final ContextMessageGrouper grouper;
     private final TokenCounter tokenCounter;
 
-    public MessageCountContextTrimmer() {
-        this.historyValidator = new ContextMessageHistoryValidator();
-        this.grouper = new ContextMessageGrouper();
-        this.tokenCounter = null;
-    }
-
-    public MessageCountContextTrimmer(ContextMessageHistoryValidator historyValidator,
-                                       ContextMessageGrouper grouper) {
-        this(historyValidator, grouper, null);
-    }
-
     public MessageCountContextTrimmer(ContextMessageHistoryValidator historyValidator,
                                        ContextMessageGrouper grouper,
                                        TokenCounter tokenCounter) {
         this.historyValidator = Objects.requireNonNull(historyValidator);
         this.grouper = Objects.requireNonNull(grouper);
-        this.tokenCounter = tokenCounter;
+        this.tokenCounter = Objects.requireNonNull(tokenCounter);
     }
 
     @Override
@@ -140,70 +121,66 @@ public class MessageCountContextTrimmer implements ContextTrimmer {
                     maxMessages, tokensBefore);
         }
 
-        // 4. 找到最新 UserAgentMessage 索引
-        int latestUserIndex = -1;
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            if (messages.get(i) instanceof UserAgentMessage) {
-                latestUserIndex = i;
-                break;
-            }
-        }
-
-        // 找到包含最新用户消息的非System/非Summary组索引
+        // 4. 找到最新 UserAgentMessage 所在的非System/非Summary组索引
         int latestUserGroupIndex = -1;
-        if (latestUserIndex >= 0) {
-            for (int gi = 0; gi < nonSystemNonSummaryGroups.size(); gi++) {
-                ContextMessageGroup group = nonSystemNonSummaryGroups.get(gi);
-                for (AgentMessage msg : group.messages()) {
-                    if (msg instanceof UserAgentMessage && messages.indexOf(msg) == latestUserIndex) {
-                        latestUserGroupIndex = gi;
-                        break;
-                    }
+        for (int gi = nonSystemNonSummaryGroups.size() - 1; gi >= 0; gi--) {
+            ContextMessageGroup group = nonSystemNonSummaryGroups.get(gi);
+            for (AgentMessage msg : group.messages()) {
+                if (msg instanceof UserAgentMessage) {
+                    latestUserGroupIndex = gi;
+                    break;
                 }
-                if (latestUserGroupIndex >= 0) break;
+            }
+            if (latestUserGroupIndex >= 0) break;
+        }
+
+        // 5. 标记 mandatory groups
+        // 最新 User 所在组及其后的所有组为 mandatory（按原始顺序）
+        Set<Integer> mandatoryGroupIndices = new LinkedHashSet<>();
+        if (latestUserGroupIndex >= 0) {
+            for (int gi = latestUserGroupIndex; gi < nonSystemNonSummaryGroups.size(); gi++) {
+                mandatoryGroupIndices.add(gi);
             }
         }
 
-        // 5. 从最后一个非 SYSTEM/非 SUMMARY 组开始向前选择
+        // 6. 计算强制保留消息数
+        int mandatoryCount = 0;
+        for (int gi : mandatoryGroupIndices) {
+            mandatoryCount += nonSystemNonSummaryGroups.get(gi).messages().size();
+        }
+
+        // 7. 从旧到新选择非 mandatory 组，直到满足预算
         Set<ContextTrimDiagnostic> diagnostics = new LinkedHashSet<>();
         diagnostics.add(ContextTrimDiagnostic.SYSTEM_MESSAGES_PRESERVED);
 
-        Set<Integer> selectedGroupIndices = new LinkedHashSet<>();
-        int selectedNonSystemCount = 0;
+        Set<Integer> selectedGroupIndices = new LinkedHashSet<>(mandatoryGroupIndices);
+        int selectedNonSystemCount = mandatoryCount;
         int overshoot = 0;
 
-        // 从后向前遍历非 System/非 Summary 组
-        for (int gi = nonSystemNonSummaryGroups.size() - 1; gi >= 0; gi--) {
+        // 如果最新 User 后的工具组导致超过 maxMessages，记录 overshoot
+        if (mandatoryCount > maxMessages) {
+            overshoot = mandatoryCount - maxMessages;
+            diagnostics.add(ContextTrimDiagnostic.ATOMIC_GROUP_OVERSHOOT);
+        }
+
+        // 从旧到新选择非 mandatory 组（在 latestUserGroupIndex 之前的组）
+        for (int gi = 0; gi < nonSystemNonSummaryGroups.size(); gi++) {
+            if (mandatoryGroupIndices.contains(gi)) {
+                continue; // 跳过 mandatory 组
+            }
+
             ContextMessageGroup group = nonSystemNonSummaryGroups.get(gi);
             int groupCount = group.messages().size();
 
-            if (selectedGroupIndices.isEmpty()) {
-                // 最新的非 System 组：必须保留（为保证最新交互完整）
-                selectedGroupIndices.add(gi);
-                selectedNonSystemCount += groupCount;
-
-                if (group.groupType() == ContextMessageGroupType.TOOL_INTERACTION) {
-                    diagnostics.add(ContextTrimDiagnostic.TOOL_GROUP_PRESERVED);
-                }
-
-                // 最新原子组超过 maxMessages 时，记录 overshoot
-                if (groupCount > maxMessages) {
-                    overshoot = groupCount - maxMessages;
-                    diagnostics.add(ContextTrimDiagnostic.ATOMIC_GROUP_OVERSHOOT);
-                }
-                continue;
-            }
-
-            // 后续组：加入后是否超过 maxMessages
             if (group.atomic()) {
                 // TOOL_INTERACTION 原子组：不得拆分
                 int projectedCount = selectedNonSystemCount + groupCount;
                 if (projectedCount <= maxMessages) {
                     selectedGroupIndices.add(gi);
-                    selectedNonSystemCount += groupCount;
+                    selectedNonSystemCount = projectedCount;
                     diagnostics.add(ContextTrimDiagnostic.TOOL_GROUP_PRESERVED);
                 }
-                // else: 整组加入会超限，不再选择这个旧组，不拆散原子组
+                // else: 整组加入会超限，不选择这个旧组
             } else {
                 // NORMAL 组（单条消息）
                 if (selectedNonSystemCount < maxMessages) {
@@ -213,57 +190,25 @@ public class MessageCountContextTrimmer implements ContextTrimmer {
             }
         }
 
-        // 6. 最新用户输入保护
-        if (latestUserIndex >= 0) {
-            boolean latestUserInSelected = false;
-            for (int selGi : selectedGroupIndices) {
-                ContextMessageGroup selGroup = nonSystemNonSummaryGroups.get(selGi);
-                for (AgentMessage msg : selGroup.messages()) {
-                    if (msg instanceof UserAgentMessage) {
-                        latestUserInSelected = true;
-                        break;
-                    }
-                }
-                if (latestUserInSelected) break;
-            }
-
-            if (latestUserInSelected) {
-                diagnostics.add(ContextTrimDiagnostic.LATEST_USER_MESSAGE_PRESERVED);
-            } else if (latestUserGroupIndex >= 0) {
-                // 最新用户消息不在已选集合中，强制加入其所在组
-                ContextMessageGroup userGroup = nonSystemNonSummaryGroups.get(latestUserGroupIndex);
-                if (!selectedGroupIndices.contains(latestUserGroupIndex)) {
-                    selectedGroupIndices.add(latestUserGroupIndex);
-                    selectedNonSystemCount += userGroup.messages().size();
-                    diagnostics.add(ContextTrimDiagnostic.LATEST_USER_MESSAGE_PRESERVED);
-
-                    if (userGroup.atomic()) {
-                        diagnostics.add(ContextTrimDiagnostic.TOOL_GROUP_PRESERVED);
-                    }
-
-                    // 加入用户组可能导致 overshoot
-                    if (selectedNonSystemCount > maxMessages && overshoot == 0) {
-                        overshoot = selectedNonSystemCount - maxMessages;
-                        diagnostics.add(ContextTrimDiagnostic.ATOMIC_GROUP_OVERSHOOT);
-                    }
-                }
-            }
+        // 8. 最新用户输入保护
+        if (latestUserGroupIndex >= 0) {
+            diagnostics.add(ContextTrimDiagnostic.LATEST_USER_MESSAGE_PRESERVED);
         }
 
-        // 7. 按原始下标升序收集保留消息
-        List<Integer> sortedSelected = new ArrayList<>(selectedGroupIndices);
-        sortedSelected.sort(Integer::compareTo);
-
+        // 9. 按原始下标升序收集保留消息
         List<Integer> allRetainedIndices = new ArrayList<>();
         for (ContextMessageGroup sg : systemGroups) {
-            allRetainedIndices.add(sg.startIndex());
+            for (int idx = sg.startIndex(); idx <= sg.endIndex(); idx++) {
+                allRetainedIndices.add(idx);
+            }
         }
-        // SUMMARY 组永久保留（不计入 maxMessages，但计入最终消息总数）
         for (ContextMessageGroup smg : summaryGroups) {
             for (int idx = smg.startIndex(); idx <= smg.endIndex(); idx++) {
                 allRetainedIndices.add(idx);
             }
         }
+        List<Integer> sortedSelected = new ArrayList<>(selectedGroupIndices);
+        sortedSelected.sort(Integer::compareTo);
         for (int selGi : sortedSelected) {
             ContextMessageGroup ng = nonSystemNonSummaryGroups.get(selGi);
             for (int idx = ng.startIndex(); idx <= ng.endIndex(); idx++) {
@@ -283,7 +228,6 @@ public class MessageCountContextTrimmer implements ContextTrimmer {
         }
 
         int retainedSystemCount = systemMessageCount;
-        // SUMMARY 组不计入 maxMessages，但计入最终消息总数
         int retainedNonSystemCount = selectedNonSystemCount + summaryMessageCount;
         long tokensAfter = estimateTokens(retainedMessages);
 
@@ -301,9 +245,6 @@ public class MessageCountContextTrimmer implements ContextTrimmer {
     }
 
     private long estimateTokens(List<AgentMessage> messages) {
-        if (tokenCounter == null) {
-            return 0;
-        }
         return tokenCounter.count(messages);
     }
 }
