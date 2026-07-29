@@ -66,31 +66,49 @@ public class ContextProcessingRequestFactory {
      * @return 上下文处理请求，两个开关均关闭时返回"无需裁剪"请求
      */
     public ContextProcessingRequest create(List<AgentMessage> messages) {
+        return create(messages, 0);
+    }
+
+    /**
+     * 为候选消息构造 ContextProcessingRequest，为临时上下文预留额外 Token。
+     * <p>
+     * additionalReservedTokens 必须大于等于 0，必须进入第七阶段已有 Token 预算计算。
+     * 不得通过减小 reservedOutputTokens 为记忆腾空间。
+     * 不得忽略记忆 Token。
+     * 不得在 ReasonNode 手工构造另一套 ContextProcessingRequest。
+     * 配置无效时抛 INVALID_CONTEXT_CONFIGURATION。
+     * 不得修改原消息列表。
+     *
+     * @param messages                  候选消息列表
+     * @param additionalReservedTokens  为临时上下文预留的额外 Token 数
+     * @return 上下文处理请求
+     */
+    public ContextProcessingRequest create(List<AgentMessage> messages, int additionalReservedTokens) {
         Objects.requireNonNull(messages, "messages must not be null");
+        if (additionalReservedTokens < 0) {
+            throw new IllegalArgumentException("additionalReservedTokens must be >= 0, got: " + additionalReservedTokens);
+        }
+
+        int effectiveAdditionalReserved = this.additionalReservedTokens + additionalReservedTokens;
 
         if (!messageCountTrimmingEnabled && !tokenTrimmingEnabled) {
-            // 两个裁剪开关均关闭，严格保留配置语义
-            // 创建合法的"无需裁剪"请求
             return ContextProcessingRequest.noTrimming(messages);
         }
 
         if (!tokenTrimmingEnabled) {
-            // 仅消息数裁剪
             return ContextProcessingRequest.messageCountOnly(messages, maxMessages);
         }
 
         if (!messageCountTrimmingEnabled) {
-            // 仅 Token 裁剪
             return ContextProcessingRequest.withSummary(
                     messages, Integer.MAX_VALUE, tokenBudget,
-                    additionalReservedTokens,
+                    effectiveAdditionalReserved,
                     false, true, summaryOptions);
         }
 
-        // 双重裁剪 + 摘要选项
         return ContextProcessingRequest.withSummary(
                 messages, maxMessages, tokenBudget,
-                additionalReservedTokens,
+                effectiveAdditionalReserved,
                 true, true, summaryOptions);
     }
 

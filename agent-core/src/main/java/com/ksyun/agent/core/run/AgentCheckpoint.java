@@ -28,6 +28,11 @@ import java.util.Set;
  * - 对状态中的已知 List、Set、Map 做防御性复制
  * - 不保存 CompiledGraph、Gateway、Registry、Spring Bean、模型客户端或异常
  * - 不得在 Checkpoint 中包含密码、credentialHash、sessionId 或 HTTP 对象
+ * - purpose 不可为空，区分 HITL_RECOVERY 和 THREAD_MEMORY
+ * - HITL_RECOVERY 用于中断恢复，THREAD_MEMORY 用于线程短期状态
+ * - 现有 HITL 构造调用必须补充 HITL_RECOVERY
+ * - 兼容构造器只能安全地默认 HITL_RECOVERY
+ * - 不得让普通调用在未指定 purpose 时默认 THREAD_MEMORY
  *
  * @param checkpointId    Checkpoint 唯一标识
  * @param runId           运行 ID
@@ -35,6 +40,7 @@ import java.util.Set;
  * @param userId          用户 ID
  * @param sessionId       安全关联字段
  * @param executionType   执行类型
+ * @param purpose         Checkpoint 用途
  * @param agentName       Agent 名称
  * @param nodeName        恢复节点名
  * @param stateData       状态数据不可变快照
@@ -51,6 +57,7 @@ public record AgentCheckpoint(
         String userId,
         String sessionId,
         CheckpointExecutionType executionType,
+        CheckpointPurpose purpose,
         String agentName,
         String nodeName,
         Map<String, Object> stateData,
@@ -60,6 +67,34 @@ public record AgentCheckpoint(
         Instant createdAt,
         Instant updatedAt
 ) {
+
+    /**
+     * 兼容构造器，默认 purpose=HITL_RECOVERY。
+     * <p>
+     * 只用于现有 HITL 调用点的渐进迁移。
+     * 不得让普通调用在未指定 purpose 时默认 THREAD_MEMORY。
+     */
+    public AgentCheckpoint(
+            String checkpointId,
+            String runId,
+            String threadId,
+            String userId,
+            String sessionId,
+            CheckpointExecutionType executionType,
+            String agentName,
+            String nodeName,
+            Map<String, Object> stateData,
+            PendingApproval pendingApproval,
+            CheckpointStatus status,
+            long version,
+            Instant createdAt,
+            Instant updatedAt
+    ) {
+        this(checkpointId, runId, threadId, userId, sessionId, executionType,
+                CheckpointPurpose.HITL_RECOVERY,
+                agentName, nodeName, stateData, pendingApproval, status,
+                version, createdAt, updatedAt);
+    }
 
     public AgentCheckpoint {
         Objects.requireNonNull(checkpointId, "checkpointId must not be null");
@@ -79,6 +114,7 @@ public record AgentCheckpoint(
             throw new IllegalArgumentException("userId must not be blank");
         }
         Objects.requireNonNull(executionType, "executionType must not be null");
+        Objects.requireNonNull(purpose, "purpose must not be null");
         Objects.requireNonNull(agentName, "agentName must not be null");
         if (agentName.isBlank()) {
             throw new IllegalArgumentException("agentName must not be blank");

@@ -3,10 +3,12 @@ package com.ksyun.agent.api.controller;
 import com.ksyun.agent.api.dto.AgentInfoResponse;
 import com.ksyun.agent.api.dto.ContextCapabilityResponse;
 import com.ksyun.agent.api.dto.HealthResponse;
+import com.ksyun.agent.api.dto.MemoryCapabilityResponse;
 import com.ksyun.agent.api.dto.SupervisorInfoResponse;
 import com.ksyun.agent.api.dto.ToolInfoResponse;
 import com.ksyun.agent.application.framework.FrameworkQueryService;
 import com.ksyun.agent.application.framework.FrameworkQueryService.ContextCapabilityInfo;
+import com.ksyun.agent.application.framework.FrameworkQueryService.MemoryCapabilityInfo;
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import com.ksyun.agent.core.tool.ToolDefinition;
@@ -59,6 +61,12 @@ public class FrameworkController {
     public ContextCapabilityResponse getContextCapability() {
         ContextCapabilityInfo info = frameworkQueryService.getContextCapability();
         return ContextCapabilityResponse.from(info);
+    }
+
+    @GetMapping("/memory")
+    public MemoryCapabilityResponse getMemoryCapability() {
+        MemoryCapabilityInfo info = frameworkQueryService.getMemoryCapability();
+        return MemoryCapabilityResponse.from(info);
     }
 
     private AgentInfoResponse toAgentInfo(AgentDefinition def) {

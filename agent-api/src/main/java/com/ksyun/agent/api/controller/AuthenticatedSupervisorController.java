@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 受认证保护的 Supervisor 调用 Controller。
@@ -59,7 +60,10 @@ public class AuthenticatedSupervisorController {
         }
 
         try {
-            AuthenticatedSupervisorRunResult runResult = service.invoke(session, request.supervisorName(), request.message());
+            Optional<String> threadId = (request.threadId() != null && !request.threadId().isBlank())
+                    ? Optional.of(request.threadId()) : Optional.empty();
+            AuthenticatedSupervisorRunResult runResult = service.invoke(
+                    session, request.supervisorName(), request.message(), threadId);
             return ResponseEntity.ok(toResponse(runResult));
         } catch (AgentFrameworkException e) {
             return ResponseEntity.status(mapErrorToHttpStatus(e.getErrorCode()))
@@ -84,10 +88,12 @@ public class AuthenticatedSupervisorController {
     private HttpStatus mapErrorToHttpStatus(AgentErrorCode errorCode) {
         return switch (errorCode) {
             case SUPERVISOR_NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case INVALID_ARGUMENT -> HttpStatus.BAD_REQUEST;
+            case INVALID_ARGUMENT, INVALID_THREAD_ID -> HttpStatus.BAD_REQUEST;
             case MODEL_NOT_AVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case MODEL_INVOCATION_FAILED -> HttpStatus.BAD_GATEWAY;
             case PERMISSION_DENIED -> HttpStatus.FORBIDDEN;
+            case THREAD_NOT_FOUND, THREAD_PARTICIPANT_MISMATCH -> HttpStatus.NOT_FOUND;
+            case THREAD_BUSY, THREAD_SUSPENDED -> HttpStatus.CONFLICT;
             default -> HttpStatus.INTERNAL_SERVER_ERROR;
         };
     }

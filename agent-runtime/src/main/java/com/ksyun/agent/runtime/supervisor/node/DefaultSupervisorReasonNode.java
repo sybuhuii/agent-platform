@@ -6,6 +6,7 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.AssistantAgentMessage;
+import com.ksyun.agent.core.message.SystemAgentMessage;
 import com.ksyun.agent.core.model.ModelRequest;
 import com.ksyun.agent.core.model.ModelResponse;
 import com.ksyun.agent.core.run.RunContext;
@@ -13,6 +14,9 @@ import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import com.ksyun.agent.runtime.context.ContextWindowManager;
 import com.ksyun.agent.runtime.context.ContextWindowSnapshot;
 import com.ksyun.agent.runtime.context.ContextWindowUpdate;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContext;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
+import com.ksyun.agent.runtime.memory.MemoryContextTrace;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
@@ -37,6 +41,15 @@ import static com.ksyun.agent.runtime.supervisor.SupervisorStateKeys.*;
  * 通过 ContextWindowManager 管理 Supervisor 自己的上下文窗口。
  * 父 Supervisor 拥有独立窗口，子 Agent 使用各自独立 ReAct 窗口。
  * 纯 Java 实现，不添加 Spring 注解。
+ * <p>
+ * Phase8 Batch5 扩展：
+ * - 通过 LongTermMemoryContextProvider 读取父 Supervisor 当前用户长期记忆
+ * - 将记忆作为临时 ephemeral 上下文注入 ContextWindowManager
+ * - 更新父 LATEST_MEMORY_CONTEXT_TRACE
+ * - 不得写入父完整 messages
+ * - 不得保存进父 THREAD_MEMORY
+ * - 不得传递父 MemoryContextAgentMessage 给子 Agent
+ * - 子 Agent 通过自己的 ReAct Reason 重新读取长期记忆
  */
 public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
 
@@ -53,17 +66,28 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
     private final AgentRegistry agentRegistry;
     private final RunIdGenerator runIdGenerator;
     private final ContextWindowManager contextWindowManager;
+    private final LongTermMemoryContextProvider memoryContextProvider;
 
     public DefaultSupervisorReasonNode(ModelInvocationGateway modelGateway,
                                         SupervisorDecisionParser decisionParser,
                                         AgentRegistry agentRegistry,
                                         RunIdGenerator runIdGenerator,
                                         ContextWindowManager contextWindowManager) {
+        this(modelGateway, decisionParser, agentRegistry, runIdGenerator, contextWindowManager, null);
+    }
+
+    public DefaultSupervisorReasonNode(ModelInvocationGateway modelGateway,
+                                        SupervisorDecisionParser decisionParser,
+                                        AgentRegistry agentRegistry,
+                                        RunIdGenerator runIdGenerator,
+                                        ContextWindowManager contextWindowManager,
+                                        LongTermMemoryContextProvider memoryContextProvider) {
         this.modelGateway = modelGateway;
         this.decisionParser = decisionParser;
         this.agentRegistry = agentRegistry;
         this.runIdGenerator = runIdGenerator;
         this.contextWindowManager = contextWindowManager;
+        this.memoryContextProvider = memoryContextProvider;
     }
 
     @Override
@@ -86,20 +110,26 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
         ContextWindowSnapshot previousSnapshot = getContextWindowSnapshot(state);
         Optional<ContextWindowSnapshot> previousOpt = Optional.ofNullable(previousSnapshot);
 
+        // Phase8 Batch5：读取当前用户长期记忆
+        LongTermMemoryContext memoryContext = loadMemoryContext(runContext);
+        List<AgentMessage> ephemeralContextMessages = resolveEphemeralContext(memoryContext);
+        MemoryContextTrace memoryTrace = buildMemoryTrace(memoryContext);
+
         // 确定发送给模型的消息
         List<AgentMessage> modelMessages;
         ContextWindowSnapshot newSnapshot = null;
         ContextProcessingTrace newTrace = null;
 
-        Optional<ContextWindowUpdate> windowUpdate = contextWindowManager.update(messages, previousOpt);
+        Optional<ContextWindowUpdate> windowUpdate = contextWindowManager.update(
+                messages, previousOpt, ephemeralContextMessages);
         if (windowUpdate.isPresent()) {
             ContextWindowUpdate update = windowUpdate.get();
             modelMessages = update.modelMessages();
             newSnapshot = update.snapshot();
             newTrace = update.trace();
         } else {
-            // 上下文关闭，使用完整消息
-            modelMessages = messages;
+            // 上下文关闭，手动插入临时记忆消息
+            modelMessages = insertEphemeralWhenContextDisabled(messages, ephemeralContextMessages);
         }
 
         // 构造 ModelRequest：tools 必须为空
@@ -117,13 +147,8 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
                     FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED,
                     FAILURE_MESSAGE, "Supervisor model invocation failed"
             );
-            if (newSnapshot != null) {
-                Map<String, Object> merged = new java.util.HashMap<>(errorResult);
-                merged.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
-                merged.put(LATEST_CONTEXT_TRACE, newTrace);
-                return merged;
-            }
-            return errorResult;
+            Map<String, Object> merged = mergeContextAndMemoryState(errorResult, newSnapshot, newTrace, memoryTrace);
+            return merged;
         }
 
         // 校验模型响应
@@ -134,13 +159,7 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
                     FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED,
                     FAILURE_MESSAGE, "Supervisor model returned empty message"
             );
-            if (newSnapshot != null) {
-                Map<String, Object> merged = new java.util.HashMap<>(errorResult);
-                merged.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
-                merged.put(LATEST_CONTEXT_TRACE, newTrace);
-                return merged;
-            }
-            return errorResult;
+            return mergeContextAndMemoryState(errorResult, newSnapshot, newTrace, memoryTrace);
         }
 
         // 模型返回 ToolCall → 视为失败
@@ -151,13 +170,7 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
                     FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED,
                     FAILURE_MESSAGE, "Supervisor model must not return tool calls"
             );
-            if (newSnapshot != null) {
-                Map<String, Object> merged = new java.util.HashMap<>(errorResult);
-                merged.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
-                merged.put(LATEST_CONTEXT_TRACE, newTrace);
-                return merged;
-            }
-            return errorResult;
+            return mergeContextAndMemoryState(errorResult, newSnapshot, newTrace, memoryTrace);
         }
 
         String content = assistantMsg.content();
@@ -167,13 +180,7 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
                     FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED,
                     FAILURE_MESSAGE, "Supervisor model returned empty content"
             );
-            if (newSnapshot != null) {
-                Map<String, Object> merged = new java.util.HashMap<>(errorResult);
-                merged.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
-                merged.put(LATEST_CONTEXT_TRACE, newTrace);
-                return merged;
-            }
-            return errorResult;
+            return mergeContextAndMemoryState(errorResult, newSnapshot, newTrace, memoryTrace);
         }
 
         // 追加 assistant 消息
@@ -194,6 +201,7 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
             result.put(STOP_REASON, SupervisorStopReason.MODEL_ERROR);
             result.put(FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED);
             result.put(FAILURE_MESSAGE, "Supervisor decision parse failed");
+            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
             if (newSnapshot != null) {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
@@ -209,14 +217,7 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
             } else {
                 decisionResult = handleFinish(draft, newMessages, newIteration);
             }
-            // 合并上下文窗口状态
-            if (newSnapshot != null) {
-                Map<String, Object> merged = new java.util.HashMap<>(decisionResult);
-                merged.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
-                merged.put(LATEST_CONTEXT_TRACE, newTrace);
-                return merged;
-            }
-            return decisionResult;
+            return mergeContextAndMemoryState(decisionResult, newSnapshot, newTrace, memoryTrace);
         } catch (AgentFrameworkException e) {
             log.error("SupervisorReason decision validation failed: runId={}, supervisor={}, iteration={}, errorCode={}",
                     runContext.runId(), definition.name(), iteration, e.getErrorCode());
@@ -226,12 +227,74 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
             result.put(STOP_REASON, SupervisorStopReason.MODEL_ERROR);
             result.put(FAILURE_ERROR_CODE, e.getErrorCode());
             result.put(FAILURE_MESSAGE, e.getMessage());
+            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
             if (newSnapshot != null) {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
             }
             return result;
         }
+    }
+
+    private LongTermMemoryContext loadMemoryContext(RunContext runContext) {
+        if (memoryContextProvider == null) {
+            return LongTermMemoryContext.empty();
+        }
+        try {
+            return memoryContextProvider.load(runContext.userId());
+        } catch (Exception e) {
+            log.error("Failed to load memory context for userId={}, falling back to empty",
+                    runContext.userId(), e);
+            return LongTermMemoryContext.empty();
+        }
+    }
+
+    private List<AgentMessage> resolveEphemeralContext(LongTermMemoryContext memoryContext) {
+        if (memoryContext.message().isPresent()) {
+            return List.of(memoryContext.message().get());
+        }
+        return List.of();
+    }
+
+    private MemoryContextTrace buildMemoryTrace(LongTermMemoryContext memoryContext) {
+        if (memoryContext == LongTermMemoryContext.empty() && memoryContext.message().isEmpty()) {
+            return null;
+        }
+        return MemoryContextTrace.from(memoryContext, java.time.Instant.now());
+    }
+
+    private List<AgentMessage> insertEphemeralWhenContextDisabled(
+            List<AgentMessage> messages,
+            List<AgentMessage> ephemeralContextMessages) {
+        if (ephemeralContextMessages.isEmpty()) {
+            return messages;
+        }
+        int systemEndIndex = 0;
+        for (int i = 0; i < messages.size(); i++) {
+            if (messages.get(i) instanceof SystemAgentMessage) {
+                systemEndIndex = i + 1;
+            } else {
+                break;
+            }
+        }
+        List<AgentMessage> result = new ArrayList<>(messages.size() + ephemeralContextMessages.size());
+        result.addAll(messages.subList(0, systemEndIndex));
+        result.addAll(ephemeralContextMessages);
+        result.addAll(messages.subList(systemEndIndex, messages.size()));
+        return result;
+    }
+
+    private Map<String, Object> mergeContextAndMemoryState(Map<String, Object> base,
+                                                            ContextWindowSnapshot snapshot,
+                                                            ContextProcessingTrace trace,
+                                                            MemoryContextTrace memoryTrace) {
+        Map<String, Object> result = new java.util.HashMap<>(base);
+        if (snapshot != null) {
+            result.put(CONTEXT_WINDOW_SNAPSHOT, snapshot);
+            result.put(LATEST_CONTEXT_TRACE, trace);
+        }
+        result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+        return result;
     }
 
     private Map<String, Object> handleDispatch(SupervisorDefinition definition,

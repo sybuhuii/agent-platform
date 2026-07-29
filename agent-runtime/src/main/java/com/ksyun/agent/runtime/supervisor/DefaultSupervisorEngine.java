@@ -4,21 +4,17 @@ import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.agent.AgentTask;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
-import com.ksyun.agent.core.message.AgentMessage;
-import com.ksyun.agent.core.message.SystemAgentMessage;
-import com.ksyun.agent.core.message.UserAgentMessage;
 import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationState;
+import com.ksyun.agent.runtime.react.ThreadExecutionOutcome;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
+import java.time.Instant;
 import java.util.Map;
-
-import static com.ksyun.agent.runtime.supervisor.SupervisorStateKeys.*;
+import java.util.Optional;
 
 /**
  * 默认 Supervisor 执行引擎实现。
@@ -36,48 +32,53 @@ public class DefaultSupervisorEngine implements SupervisorEngine {
     private final SupervisorExecutionValidator validator;
     private final SupervisorPromptBuilder promptBuilder;
     private final CompiledGraph<SupervisorAgentState> compiledGraph;
+    private final SupervisorThreadConversationStateMapper stateMapper;
+    private final SupervisorThreadPersistencePolicy persistencePolicy;
+    private final java.time.Clock clock;
 
     public DefaultSupervisorEngine(SupervisorExecutionValidator validator,
                                     SupervisorPromptBuilder promptBuilder,
-                                    SupervisorGraphFactory graphFactory) {
+                                    SupervisorGraphFactory graphFactory,
+                                    SupervisorThreadConversationStateMapper stateMapper,
+                                    SupervisorThreadPersistencePolicy persistencePolicy,
+                                    java.time.Clock clock) {
         this.validator = validator;
         this.promptBuilder = promptBuilder;
         this.compiledGraph = graphFactory.buildGraph();
+        this.stateMapper = stateMapper;
+        this.persistencePolicy = persistencePolicy;
+        this.clock = clock;
     }
 
     @Override
     public AgentResult execute(SupervisorDefinition definition, AgentTask rootTask, RunContext context) {
+        return executeThread(definition, rootTask, context, Optional.empty()).result();
+    }
+
+    @Override
+    public ThreadExecutionOutcome executeThread(
+            SupervisorDefinition definition,
+            AgentTask task,
+            RunContext context,
+            Optional<ThreadConversationState> previousState
+    ) {
         // 1. 校验
-        validator.validate(definition, rootTask, context);
+        validator.validate(definition, task, context);
 
-        // 2. 构造系统提示词
-        String systemPrompt = promptBuilder.build(definition);
+        // 2. 构造初始 State
+        SupervisorAgentState initialState;
+        if (previousState.isEmpty()) {
+            // 新线程
+            initialState = stateMapper.createInitialState(definition, task, context);
+        } else {
+            // 续接线程
+            initialState = stateMapper.createContinuedState(definition, task, context, previousState.get());
+        }
 
-        // 3. 构造初始 supervisorMessages
-        List<AgentMessage> initialMessages = new ArrayList<>();
-        initialMessages.add(new SystemAgentMessage(systemPrompt));
-        initialMessages.add(new UserAgentMessage(rootTask.instruction()));
-
-        // 4. 构造初始 State
-        Map<String, Object> initialState = new HashMap<>();
-        initialState.put(SUPERVISOR_DEFINITION, definition);
-        initialState.put(ROOT_TASK, rootTask);
-        initialState.put(RUN_CONTEXT, context);
-        initialState.put(SUPERVISOR_MESSAGES, initialMessages);
-        initialState.put(DECISION, null);
-        initialState.put(PENDING_TASKS, List.of());
-        initialState.put(LATEST_AGENT_RESULTS, List.of());
-        initialState.put(AGENT_RESULTS, List.of());
-        initialState.put(ITERATION, 0);
-        initialState.put(FINAL_RESULT, null);
-        initialState.put(STOP_REASON, null);
-        initialState.put(FAILURE_MESSAGE, null);
-        initialState.put(FAILURE_ERROR_CODE, null);
-
-        // 5. 执行图
+        // 3. 执行图
         SupervisorAgentState finalState;
         try {
-            finalState = compiledGraph.invoke(initialState)
+            finalState = compiledGraph.invoke(initialState.data())
                     .orElseThrow(() -> new AgentFrameworkException(
                             AgentErrorCode.INTERNAL_ERROR,
                             "Supervisor graph execution returned empty state"));
@@ -95,7 +96,7 @@ public class DefaultSupervisorEngine implements SupervisorEngine {
             );
         }
 
-        // 6. 读取最终结果
+        // 4. 读取最终结果
         AgentResult finalResult = getFinalResult(finalState);
         if (finalResult == null) {
             log.error("Supervisor execution completed without finalResult: runId={}, supervisor={}",
@@ -106,6 +107,32 @@ public class DefaultSupervisorEngine implements SupervisorEngine {
             );
         }
 
-        return finalResult;
+        // 5. 调用 SupervisorThreadPersistencePolicy 判断是否稳定
+        Optional<ThreadConversationState> conversationState = Optional.empty();
+        if (persistencePolicy.isPersistable(finalResult, finalState)) {
+            try {
+                // 6. 稳定时提取 ThreadConversationState
+                conversationState = Optional.of(
+                        stateMapper.extractStableState(
+                                definition.name(),
+                                context.runId(),
+                                finalState,
+                                Instant.now(clock)
+                        )
+                );
+            } catch (AgentFrameworkException e) {
+                // 状态映射失败，conversationState 为空
+                log.warn("Supervisor stable state extraction failed: runId={}, errorCode={}",
+                        context.runId(), e.getErrorCode());
+                conversationState = Optional.empty();
+            }
+        }
+
+        // 7. 不稳定时 conversationState 为空
+        return new ThreadExecutionOutcome(finalResult, conversationState);
+    }
+
+    private AgentResult getFinalResult(SupervisorAgentState state) {
+        return state.<AgentResult>value(SupervisorStateKeys.FINAL_RESULT).orElse(null);
     }
 }

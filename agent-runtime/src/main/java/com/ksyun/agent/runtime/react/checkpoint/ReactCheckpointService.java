@@ -6,6 +6,7 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.CheckpointExecutionType;
+import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.store.CheckpointIdGenerator;
@@ -142,6 +143,7 @@ public class ReactCheckpointService {
                 runContext.userId(),
                 runContext.sessionId(),
                 CheckpointExecutionType.REACT_AGENT,
+                CheckpointPurpose.HITL_RECOVERY,
                 definition.name(),
                 nodeName,
                 stateData,
@@ -213,6 +215,7 @@ public class ReactCheckpointService {
                 existingCp.userId(),
                 existingCp.sessionId(),
                 existingCp.executionType(),
+                existingCp.purpose(),       // HITL_RECOVERY 保持不变
                 existingCp.agentName(),
                 nodeName,
                 stateData,

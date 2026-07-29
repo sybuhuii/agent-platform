@@ -62,7 +62,8 @@ public class SampleSecurityConfiguration {
                             ToolPermissionCodes.invoke("calculator"),
                             ToolPermissionCodes.invoke("current_time"),
                             ToolPermissionCodes.invoke("echo"),
-                            ToolPermissionCodes.invoke("list_demo_records")
+                            ToolPermissionCodes.invoke("list_demo_records"),
+                            ToolPermissionCodes.invoke("remember_user_memory")
                     )
             );
         }

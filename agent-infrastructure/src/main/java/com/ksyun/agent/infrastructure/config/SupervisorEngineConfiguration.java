@@ -1,7 +1,12 @@
 package com.ksyun.agent.infrastructure.config;
 
+import com.ksyun.agent.application.supervisor.AuthenticatedSupervisorApplicationService;
 import com.ksyun.agent.application.supervisor.SupervisorDevApplicationService;
+import com.ksyun.agent.core.run.ThreadIdGenerator;
 import com.ksyun.agent.infrastructure.supervisor.JacksonSupervisorDecisionParser;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadExecutionCoordinator;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadIdValidator;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
@@ -9,11 +14,14 @@ import com.ksyun.agent.runtime.registry.SupervisorRegistry;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
 import com.ksyun.agent.runtime.supervisor.*;
 import com.ksyun.agent.runtime.supervisor.node.*;
-import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
+
+import java.time.Clock;
 
 /**
  * Supervisor 引擎 Bean 装配。
@@ -24,7 +32,7 @@ import org.springframework.context.annotation.Bean;
  * - 不创建 Fake ModelClient 或 Fake ReactAgentEngine。
  * - 不产生 Bean 循环依赖。
  * - 本批不注册 Sample Supervisor。
- * - 本批不创建 ApplicationService 或 Controller。
+ * - runtime 类不得添加 Spring 注解。
  */
 @AutoConfiguration(after = ReactEngineConfiguration.class)
 @ConditionalOnBean({ModelInvocationGateway.class, ReactAgentEngine.class})
@@ -52,9 +60,11 @@ public class SupervisorEngineConfiguration {
             SupervisorDecisionParser decisionParser,
             AgentRegistry agentRegistry,
             RunIdGenerator runIdGenerator,
-            com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager) {
+            com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager,
+            ObjectProvider<LongTermMemoryContextProvider> memoryContextProviderProvider) {
+        LongTermMemoryContextProvider memoryContextProvider = memoryContextProviderProvider.getIfAvailable();
         return new DefaultSupervisorReasonNode(modelInvocationGateway, decisionParser,
-                agentRegistry, runIdGenerator, contextWindowManager);
+                agentRegistry, runIdGenerator, contextWindowManager, memoryContextProvider);
     }
 
     @Bean
@@ -119,14 +129,48 @@ public class SupervisorEngineConfiguration {
     // --- SupervisorExecutionValidator (已在 AgentFrameworkAutoConfiguration 中注册) ---
     // 此处不再重复注册
 
+    // --- Phase8 Batch4 新增：Supervisor 线程 Mapper 和持久化策略 ---
+
+    @Bean
+    public SupervisorThreadConversationStateMapper supervisorThreadConversationStateMapper(
+            SupervisorPromptBuilder promptBuilder,
+            Clock clock) {
+        return new SupervisorThreadConversationStateMapper(promptBuilder, clock);
+    }
+
+    @Bean
+    public SupervisorThreadPersistencePolicy supervisorThreadPersistencePolicy() {
+        return new SupervisorThreadPersistencePolicy();
+    }
+
     // --- DefaultSupervisorEngine ---
 
     @Bean
     public SupervisorEngine supervisorEngine(
             SupervisorExecutionValidator validator,
             SupervisorPromptBuilder promptBuilder,
-            SupervisorGraphFactory graphFactory) {
-        return new DefaultSupervisorEngine(validator, promptBuilder, graphFactory);
+            SupervisorGraphFactory graphFactory,
+            SupervisorThreadConversationStateMapper stateMapper,
+            SupervisorThreadPersistencePolicy persistencePolicy,
+            Clock clock) {
+        return new DefaultSupervisorEngine(validator, promptBuilder, graphFactory, stateMapper, persistencePolicy, clock);
+    }
+
+    // --- AuthenticatedSupervisorApplicationService ---
+
+    @Bean
+    public AuthenticatedSupervisorApplicationService authenticatedSupervisorApplicationService(
+            SupervisorRegistry supervisorRegistry,
+            SupervisorEngine supervisorEngine,
+            RunIdGenerator runIdGenerator,
+            ThreadIdGenerator threadIdGenerator,
+            ThreadIdValidator threadIdValidator,
+            ThreadConversationCheckpointService threadConversationCheckpointService,
+            ThreadExecutionCoordinator threadExecutionCoordinator) {
+        return new AuthenticatedSupervisorApplicationService(
+                supervisorRegistry, supervisorEngine, runIdGenerator,
+                threadIdGenerator, threadIdValidator,
+                threadConversationCheckpointService, threadExecutionCoordinator);
     }
 
     // --- SupervisorDevApplicationService ---

@@ -5,21 +5,14 @@ import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.agent.AgentTask;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
-import com.ksyun.agent.core.message.AgentMessage;
-import com.ksyun.agent.core.message.SystemAgentMessage;
-import com.ksyun.agent.core.message.UserAgentMessage;
 import com.ksyun.agent.core.run.RunContext;
-import com.ksyun.agent.core.run.RunStatus;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationState;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
+import java.time.Instant;
+import java.util.Optional;
 
 /**
  * 默认 ReAct 执行引擎实现。
@@ -40,6 +33,13 @@ import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
  * - 不会再次调用模型
  * - 不会再次执行危险工具
  * - 普通 COMPLETE、FAIL 和 MAX_ITERATIONS 行为不变
+ * <p>
+ * executeThread 新增线程续接支持：
+ * - previousState 为空时通过 Mapper 创建新 State
+ * - previousState 存在时通过 Mapper 创建续接 State
+ * - 执行完成后调用 PersistencePolicy 判断是否稳定
+ * - 稳定时通过 Mapper 提取 ThreadConversationState
+ * - 不在 Engine 中访问 CheckpointStore 或保存 THREAD_MEMORY
  */
 public class DefaultReactAgentEngine implements ReactAgentEngine {
 
@@ -47,50 +47,80 @@ public class DefaultReactAgentEngine implements ReactAgentEngine {
 
     private final ReactExecutionValidator validator;
     private final CompiledGraph<ReactAgentState> compiledGraph;
+    private final ReactThreadConversationStateMapper stateMapper;
+    private final ReactThreadPersistencePolicy persistencePolicy;
+    private final java.time.Clock clock;
 
     public DefaultReactAgentEngine(ReactExecutionValidator validator,
-                                    ReactAgentGraphFactory graphFactory) {
+                                    ReactAgentGraphFactory graphFactory,
+                                    ReactThreadConversationStateMapper stateMapper,
+                                    ReactThreadPersistencePolicy persistencePolicy,
+                                    java.time.Clock clock) {
         this.validator = validator;
         this.compiledGraph = graphFactory.buildGraph();
+        this.stateMapper = stateMapper;
+        this.persistencePolicy = persistencePolicy;
+        this.clock = clock;
     }
 
+    /**
+     * 兼容旧调用方，委托 executeThread 并只返回 result。
+     * <p>
+     * 不访问 CheckpointStore。不保存 THREAD_MEMORY。
+     */
     @Override
     public AgentResult execute(AgentDefinition definition, AgentTask task, RunContext context) {
+        return executeThread(definition, task, context, Optional.empty()).result();
+    }
+
+    /**
+     * 执行线程级别的 Agent ReAct 循环。
+     * <p>
+     * 流程：
+     * 1. 校验请求参数
+     * 2. previousState 为空时创建新 State
+     * 3. previousState 存在时创建续接 State
+     * 4. 调用现有 CompiledGraph
+     * 5. 取得最终 ReactAgentState
+     * 6. 取得 AgentResult
+     * 7. 调用持久化策略判断是否稳定
+     * 8. 稳定时提取 ThreadConversationState
+     * 9. 不稳定时 conversationState 为空
+     * 10. 返回 ThreadExecutionOutcome
+     * <p>
+     * 不在 Engine 中访问 CheckpointStore。
+     * 不在 Engine 中保存 THREAD_MEMORY。
+     * 不在 Engine 中访问 SessionStore。
+     * 不在 Engine 中生成 threadId 或 runId。
+     */
+    @Override
+    public ThreadExecutionOutcome executeThread(
+            AgentDefinition definition,
+            AgentTask task,
+            RunContext context,
+            Optional<ThreadConversationState> previousState
+    ) {
         // 1. 校验请求参数
         validator.validate(definition, task, context);
 
-        // 2. 构造初始 messages
-        List<AgentMessage> initialMessages = new ArrayList<>();
-        if (definition.systemPrompt() != null && !definition.systemPrompt().isBlank()) {
-            initialMessages.add(new SystemAgentMessage(definition.systemPrompt()));
+        // 2. 构造初始/续接 State
+        ReactAgentState initialState;
+        if (previousState.isEmpty()) {
+            initialState = stateMapper.createInitialState(definition, task, context);
+            log.info("New thread execution: runId={}, threadId={}, agent={}",
+                    context.runId(), context.threadId(), definition.name());
+        } else {
+            initialState = stateMapper.createContinuedState(
+                    definition, task, context, previousState.get());
+            log.info("Continued thread execution: runId={}, threadId={}, agent={}, previousMessageCount={}",
+                    context.runId(), context.threadId(), definition.name(),
+                    previousState.get().messages().size());
         }
-        initialMessages.add(new UserAgentMessage(task.instruction()));
 
-        // 3. 构造初始 State
-        Map<String, Object> initialState = new HashMap<>();
-        initialState.put(AGENT_DEFINITION, definition);
-        initialState.put(TASK, task);
-        initialState.put(RUN_CONTEXT, context);
-        initialState.put(MESSAGES, initialMessages);
-        initialState.put(PENDING_TOOL_CALLS, List.of());
-        initialState.put(LATEST_TOOL_RESULTS, List.of());
-        initialState.put(TOOL_TRACES, List.of());
-        initialState.put(ITERATION, 0);
-        initialState.put(FINAL_RESULT, null);
-        initialState.put(STOP_REASON, null);
-        initialState.put(FAILURE_MESSAGE, null);
-        initialState.put(FAILURE_ERROR_CODE, null);
-        // Phase6 Batch2 新增初始状态
-        initialState.put(TOOL_EXECUTION_CURSOR, 0);
-        initialState.put(TOOL_EXECUTION_BUFFER, List.of());
-        initialState.put(PENDING_APPROVAL, null);
-        initialState.put(CHECKPOINT_ID, null);
-        initialState.put(RUN_STATUS, null);
-
-        // 4. 执行图
+        // 3. 执行图
         ReactAgentState finalState;
         try {
-            finalState = compiledGraph.invoke(initialState)
+            finalState = compiledGraph.invoke(initialState.data())
                     .orElseThrow(() -> new AgentFrameworkException(
                             AgentErrorCode.INTERNAL_ERROR,
                             "Graph execution returned empty state"));
@@ -105,11 +135,11 @@ public class DefaultReactAgentEngine implements ReactAgentEngine {
                     AgentErrorCode.INTERNAL_ERROR,
                     "ReAct execution failed",
                     e
-            );
+        );
         }
 
-        // 5. 读取最终结果
-        AgentResult finalResult = getFinalResult(finalState);
+        // 4. 读取最终结果
+        AgentResult finalResult = ReactStateKeys.getFinalResult(finalState);
         if (finalResult == null) {
             log.error("ReAct execution completed without finalResult: runId={}, agent={}",
                     context.runId(), definition.name());
@@ -119,7 +149,32 @@ public class DefaultReactAgentEngine implements ReactAgentEngine {
             );
         }
 
+        // 5. 判断是否可持久化
+        boolean persistable = persistencePolicy.isPersistable(finalResult, finalState);
+
+        // 6. 稳定时提取 ThreadConversationState
+        Optional<ThreadConversationState> conversationState;
+        if (persistable) {
+            try {
+                Instant updatedAt = clock.instant();
+                ThreadConversationState extracted = stateMapper.extractStableState(
+                        definition.name(), context.runId(), finalState, updatedAt);
+                conversationState = Optional.of(extracted);
+                log.info("Stable state extracted: runId={}, threadId={}, agent={}, messageCount={}",
+                        context.runId(), context.threadId(), definition.name(),
+                        extracted.messages().size());
+            } catch (AgentFrameworkException e) {
+                log.warn("Stable state extraction failed: runId={}, threadId={}, errorCode={}",
+                        context.runId(), context.threadId(), e.getErrorCode());
+                conversationState = Optional.empty();
+            }
+        } else {
+            conversationState = Optional.empty();
+            log.info("State not persistable: runId={}, threadId={}, status={}",
+                    context.runId(), context.threadId(), finalResult.status());
+        }
+
         // SUSPENDED 不转换成 FAILED
-        return finalResult;
+        return new ThreadExecutionOutcome(finalResult, conversationState);
     }
 }

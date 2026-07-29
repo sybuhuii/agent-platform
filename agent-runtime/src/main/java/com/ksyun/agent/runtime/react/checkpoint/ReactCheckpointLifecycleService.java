@@ -3,6 +3,7 @@ package com.ksyun.agent.runtime.react.checkpoint;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.store.CheckpointStore;
 import org.slf4j.Logger;
@@ -64,6 +65,7 @@ public class ReactCheckpointLifecycleService {
                 resumingCheckpoint.userId(),
                 resumingCheckpoint.sessionId(),
                 resumingCheckpoint.executionType(),
+                resumingCheckpoint.purpose(),       // HITL_RECOVERY 保持不变
                 resumingCheckpoint.agentName(),
                 resumingCheckpoint.nodeName(),
                 resumingCheckpoint.stateData(),
@@ -120,6 +122,7 @@ public class ReactCheckpointLifecycleService {
                 resumingCheckpoint.userId(),
                 resumingCheckpoint.sessionId(),
                 resumingCheckpoint.executionType(),
+                resumingCheckpoint.purpose(),       // HITL_RECOVERY 保持不变
                 resumingCheckpoint.agentName(),
                 resumingCheckpoint.nodeName(),
                 resumingCheckpoint.stateData(),

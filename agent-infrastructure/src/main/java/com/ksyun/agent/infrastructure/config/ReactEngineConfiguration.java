@@ -9,13 +9,18 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.sanitizer.SensitiveValueSanitizer;
 import com.ksyun.agent.core.store.CheckpointIdGenerator;
 import com.ksyun.agent.core.store.CheckpointStore;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadExecutionCoordinator;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
 import com.ksyun.agent.runtime.react.DefaultReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentGraphFactory;
 import com.ksyun.agent.runtime.react.ReactExecutionValidator;
 import com.ksyun.agent.runtime.react.ReactResumeEngine;
 import com.ksyun.agent.runtime.react.ReactRouter;
+import com.ksyun.agent.runtime.react.ReactThreadConversationStateMapper;
+import com.ksyun.agent.runtime.react.ReactThreadPersistencePolicy;
 import com.ksyun.agent.runtime.react.ReactToolExecutionRouter;
 import com.ksyun.agent.runtime.react.checkpoint.CheckpointResumeCoordinator;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointLifecycleService;
@@ -30,6 +35,7 @@ import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.ToolRegistry;
 import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
 import org.bsc.langgraph4j.action.NodeAction;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -131,8 +137,11 @@ public class ReactEngineConfiguration {
     @ConditionalOnBean(ModelInvocationGateway.class)
     public ReactReasonNode reactReasonNode(ModelInvocationGateway modelGateway,
                                             ToolRegistry toolRegistry,
-                                            com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager) {
-        return new com.ksyun.agent.runtime.react.node.DefaultReactReasonNode(modelGateway, toolRegistry, contextWindowManager);
+                                            com.ksyun.agent.runtime.context.ContextWindowManager contextWindowManager,
+                                            ObjectProvider<LongTermMemoryContextProvider> memoryContextProviderProvider) {
+        LongTermMemoryContextProvider memoryContextProvider = memoryContextProviderProvider.getIfAvailable();
+        return new com.ksyun.agent.runtime.react.node.DefaultReactReasonNode(
+                modelGateway, toolRegistry, contextWindowManager, memoryContextProvider);
     }
 
     @Bean
@@ -188,6 +197,21 @@ public class ReactEngineConfiguration {
 
     // ---- 图工厂和引擎 ----
 
+    // Phase8 Batch3 新增：线程续接 Mapper 和持久化策略
+    // 无模型配置时这些 Bean 仍可装配
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReactThreadConversationStateMapper reactThreadConversationStateMapper(Clock clock) {
+        return new ReactThreadConversationStateMapper(clock);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ReactThreadPersistencePolicy reactThreadPersistencePolicy() {
+        return new ReactThreadPersistencePolicy();
+    }
+
     @Bean
     @ConditionalOnBean(ModelInvocationGateway.class)
     public ReactAgentGraphFactory reactAgentGraphFactory(
@@ -210,8 +234,13 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnBean(ModelInvocationGateway.class)
-    public ReactAgentEngine reactAgentEngine(ReactExecutionValidator validator, ReactAgentGraphFactory graphFactory) {
-        return new DefaultReactAgentEngine(validator, graphFactory);
+    public ReactAgentEngine reactAgentEngine(
+            ReactExecutionValidator validator,
+            ReactAgentGraphFactory graphFactory,
+            ReactThreadConversationStateMapper stateMapper,
+            ReactThreadPersistencePolicy persistencePolicy,
+            Clock clock) {
+        return new DefaultReactAgentEngine(validator, graphFactory, stateMapper, persistencePolicy, clock);
     }
 
     // ---- Phase6 Batch3 恢复链（需要模型）----
@@ -223,8 +252,12 @@ public class ReactEngineConfiguration {
             ReactCheckpointStateMapper stateMapper,
             ReactResumeValidator resumeValidator,
             ReactCheckpointLifecycleService lifecycleService,
-            ReactAgentGraphFactory graphFactory) {
-        return new ReactResumeEngine(resumeCoordinator, stateMapper, resumeValidator, lifecycleService, graphFactory);
+            ReactAgentGraphFactory graphFactory,
+            ReactThreadConversationStateMapper threadStateMapper,
+            ReactThreadPersistencePolicy persistencePolicy,
+            Clock clock) {
+        return new ReactResumeEngine(resumeCoordinator, stateMapper, resumeValidator,
+                lifecycleService, graphFactory, threadStateMapper, persistencePolicy, clock);
     }
 
     @Bean
@@ -232,8 +265,11 @@ public class ReactEngineConfiguration {
     public ApprovalResumeApplicationService approvalResumeApplicationService(
             ApprovalDecisionService decisionService,
             ReactResumeEngine resumeEngine,
-            CheckpointStore checkpointStore) {
-        return new ApprovalResumeApplicationService(decisionService, resumeEngine, checkpointStore);
+            CheckpointStore checkpointStore,
+            ThreadExecutionCoordinator threadExecutionCoordinator,
+            ThreadConversationCheckpointService threadConversationCheckpointService) {
+        return new ApprovalResumeApplicationService(decisionService, resumeEngine,
+                checkpointStore, threadExecutionCoordinator, threadConversationCheckpointService);
     }
 
     // ---- Dev Application Service ----

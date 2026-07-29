@@ -8,7 +8,8 @@ import com.ksyun.agent.application.auth.SessionTtlConfig;
 import com.ksyun.agent.application.auth.SessionValidationService;
 import com.ksyun.agent.application.auth.UserManagementApplicationService;
 import com.ksyun.agent.application.auth.UserSessionRevocationService;
-import com.ksyun.agent.application.supervisor.AuthenticatedSupervisorApplicationService;
+
+import com.ksyun.agent.core.run.ThreadIdGenerator;
 import com.ksyun.agent.core.security.CredentialHasher;
 import com.ksyun.agent.core.security.RolePermissionResolver;
 import com.ksyun.agent.core.security.RoleProvider;
@@ -23,6 +24,9 @@ import com.ksyun.agent.infrastructure.security.UuidUserIdGenerator;
 import com.ksyun.agent.infrastructure.store.InMemoryRoleStore;
 import com.ksyun.agent.infrastructure.store.InMemorySessionStore;
 import com.ksyun.agent.infrastructure.store.InMemoryUserStore;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadExecutionCoordinator;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadIdValidator;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.RoleProviderRegistrar;
 import com.ksyun.agent.runtime.registry.SupervisorRegistry;
@@ -180,16 +184,14 @@ public class SecurityConfiguration {
     public AuthenticatedAgentApplicationService authenticatedAgentApplicationService(
             AgentRegistry agentRegistry,
             ReactAgentEngine reactAgentEngine,
-            RunIdGenerator runIdGenerator) {
-        return new AuthenticatedAgentApplicationService(agentRegistry, reactAgentEngine, runIdGenerator);
-    }
-
-    @Bean
-    @ConditionalOnBean(SupervisorEngine.class)
-    public AuthenticatedSupervisorApplicationService authenticatedSupervisorApplicationService(
-            SupervisorRegistry supervisorRegistry,
-            SupervisorEngine supervisorEngine,
-            RunIdGenerator runIdGenerator) {
-        return new AuthenticatedSupervisorApplicationService(supervisorRegistry, supervisorEngine, runIdGenerator);
+            RunIdGenerator runIdGenerator,
+            ThreadIdGenerator threadIdGenerator,
+            ThreadIdValidator threadIdValidator,
+            ThreadConversationCheckpointService threadConversationCheckpointService,
+            ThreadExecutionCoordinator threadExecutionCoordinator) {
+        return new AuthenticatedAgentApplicationService(
+                agentRegistry, reactAgentEngine, runIdGenerator,
+                threadIdGenerator, threadIdValidator,
+                threadConversationCheckpointService, threadExecutionCoordinator);
     }
 }

@@ -1,8 +1,10 @@
 package com.ksyun.agent.core.store;
 
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointPurpose;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -117,4 +119,39 @@ public interface CheckpointStore {
      * @return 实际删除数量
      */
     int deleteByThreadId(String threadId);
+
+    /**
+     * 按 userId + threadId + purpose 查询 Checkpoint 列表。
+     * <p>
+     * 必须同时传入 userId、threadId 和 purpose。
+     * 不得返回其他用户的 Checkpoint。
+     * 不得返回其他 purpose 的 Checkpoint。
+     * 返回不可变 List。
+     * 不存在数据时返回空 List。
+     *
+     * @param userId   用户 ID
+     * @param threadId 线程 ID
+     * @param purpose  Checkpoint 用途
+     * @return 不可变快照
+     */
+    List<AgentCheckpoint> findByThreadId(String userId, String threadId, CheckpointPurpose purpose);
+
+    /**
+     * 按 userId + threadId + purpose 加载最新的 Checkpoint。
+     * <p>
+     * 选择规则：
+     * 1. 优先比较 updatedAt，较新的优先
+     * 2. updatedAt 相同时比较 version
+     * 3. version 相同时使用 checkpointId 稳定排序
+     * 4. 相同数据多次查询必须得到相同结果
+     * 5. 不得依赖 ConcurrentHashMap 遍历顺序
+     * <p>
+     * 不存在时返回 Optional.empty。
+     *
+     * @param userId   用户 ID
+     * @param threadId 线程 ID
+     * @param purpose  Checkpoint 用途
+     * @return 最新的 Checkpoint
+     */
+    Optional<AgentCheckpoint> loadLatestByThreadId(String userId, String threadId, CheckpointPurpose purpose);
 }

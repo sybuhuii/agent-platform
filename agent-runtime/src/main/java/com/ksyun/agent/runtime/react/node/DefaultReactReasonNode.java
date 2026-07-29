@@ -2,10 +2,12 @@ package com.ksyun.agent.runtime.react.node;
 
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.context.ContextProcessingTrace;
+import com.ksyun.agent.core.context.TokenCounter;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.AssistantAgentMessage;
+import com.ksyun.agent.core.message.MemoryContextAgentMessage;
 import com.ksyun.agent.core.model.ModelRequest;
 import com.ksyun.agent.core.model.ModelResponse;
 import com.ksyun.agent.core.run.RunContext;
@@ -14,6 +16,9 @@ import com.ksyun.agent.core.tool.ToolDefinition;
 import com.ksyun.agent.runtime.context.ContextWindowManager;
 import com.ksyun.agent.runtime.context.ContextWindowSnapshot;
 import com.ksyun.agent.runtime.context.ContextWindowUpdate;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContext;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
+import com.ksyun.agent.runtime.memory.MemoryContextTrace;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
@@ -36,6 +41,13 @@ import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
  * 通过 ContextWindowManager 管理上下文窗口，模型只接收压缩后的消息。
  * 完整历史仍保存在 state.messages 中，不被裁剪结果覆盖。
  * 纯 Java 实现，不添加 Spring 注解。
+ * <p>
+ * Phase8 Batch5 扩展：
+ * - 通过 LongTermMemoryContextProvider 读取当前用户长期记忆
+ * - 将记忆作为临时 ephemeral 上下文注入 ContextWindowManager
+ * - 更新 LATEST_MEMORY_CONTEXT_TRACE
+ * - 不得把 MemoryContextAgentMessage 追加到 state.messages
+ * - 不得把 MemoryContextAgentMessage 保存到 ThreadConversationState
  */
 public class DefaultReactReasonNode implements ReactReasonNode {
 
@@ -44,13 +56,22 @@ public class DefaultReactReasonNode implements ReactReasonNode {
     private final ModelInvocationGateway modelGateway;
     private final ToolRegistry toolRegistry;
     private final ContextWindowManager contextWindowManager;
+    private final LongTermMemoryContextProvider memoryContextProvider;
 
     public DefaultReactReasonNode(ModelInvocationGateway modelGateway,
                                    ToolRegistry toolRegistry,
                                    ContextWindowManager contextWindowManager) {
+        this(modelGateway, toolRegistry, contextWindowManager, null);
+    }
+
+    public DefaultReactReasonNode(ModelInvocationGateway modelGateway,
+                                   ToolRegistry toolRegistry,
+                                   ContextWindowManager contextWindowManager,
+                                   LongTermMemoryContextProvider memoryContextProvider) {
         this.modelGateway = modelGateway;
         this.toolRegistry = toolRegistry;
         this.contextWindowManager = contextWindowManager;
+        this.memoryContextProvider = memoryContextProvider;
     }
 
     @Override
@@ -75,20 +96,26 @@ public class DefaultReactReasonNode implements ReactReasonNode {
         ContextWindowSnapshot previousSnapshot = getContextWindowSnapshot(state);
         Optional<ContextWindowSnapshot> previousOpt = Optional.ofNullable(previousSnapshot);
 
+        // Phase8 Batch5：读取当前用户长期记忆
+        LongTermMemoryContext memoryContext = loadMemoryContext(runContext);
+        List<AgentMessage> ephemeralContextMessages = resolveEphemeralContext(memoryContext);
+        MemoryContextTrace memoryTrace = buildMemoryTrace(memoryContext);
+
         // 确定发送给模型的消息
         List<AgentMessage> modelMessages;
         ContextWindowSnapshot newSnapshot = null;
         ContextProcessingTrace newTrace = null;
 
-        Optional<ContextWindowUpdate> windowUpdate = contextWindowManager.update(fullHistory, previousOpt);
+        Optional<ContextWindowUpdate> windowUpdate = contextWindowManager.update(
+                fullHistory, previousOpt, ephemeralContextMessages);
         if (windowUpdate.isPresent()) {
             ContextWindowUpdate update = windowUpdate.get();
             modelMessages = update.modelMessages();
             newSnapshot = update.snapshot();
             newTrace = update.trace();
         } else {
-            // 上下文关闭，使用完整消息
-            modelMessages = fullHistory;
+            // 上下文关闭，手动插入临时记忆消息
+            modelMessages = insertEphemeralWhenContextDisabled(fullHistory, ephemeralContextMessages);
         }
 
         // 构造本轮允许的工具定义
@@ -112,10 +139,9 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                     LATEST_TOOL_RESULTS, List.of()
             );
             // 即使失败也更新窗口快照和追踪（如果存在）
-            if (newSnapshot != null) {
-                return mergeContextState(errorResult, newSnapshot, newTrace);
-            }
-            return errorResult;
+            Map<String, Object> merged = mergeContextState(errorResult, newSnapshot, newTrace);
+            merged = mergeMemoryTrace(merged, memoryTrace);
+            return merged;
         } catch (Exception e) {
             log.error("Reason node model invocation failed: runId={}, agent={}, iteration={}",
                     runContext.runId(), definition.name(), iteration, e);
@@ -126,10 +152,9 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                     PENDING_TOOL_CALLS, List.of(),
                     LATEST_TOOL_RESULTS, List.of()
             );
-            if (newSnapshot != null) {
-                return mergeContextState(errorResult, newSnapshot, newTrace);
-            }
-            return errorResult;
+            Map<String, Object> merged = mergeContextState(errorResult, newSnapshot, newTrace);
+            merged = mergeMemoryTrace(merged, memoryTrace);
+            return merged;
         }
 
         AssistantAgentMessage assistantMsg = response.message();
@@ -152,6 +177,7 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
             }
+            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
             return result;
         }
 
@@ -168,6 +194,7 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
             }
+            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
             return result;
         }
 
@@ -186,6 +213,73 @@ public class DefaultReactReasonNode implements ReactReasonNode {
             result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
             result.put(LATEST_CONTEXT_TRACE, newTrace);
         }
+        result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+        return result;
+    }
+
+    /**
+     * 加载当前用户的长期记忆上下文。
+     * 记忆为空或 Provider 未注入时返回空上下文。
+     * 记忆读取失败时使用明确框架错误，不得加载其他用户数据。
+     */
+    private LongTermMemoryContext loadMemoryContext(RunContext runContext) {
+        if (memoryContextProvider == null) {
+            return LongTermMemoryContext.empty();
+        }
+        try {
+            return memoryContextProvider.load(runContext.userId());
+        } catch (Exception e) {
+            log.error("Failed to load memory context for userId={}, falling back to empty",
+                    runContext.userId(), e);
+            // 记忆读取失败时使用明确框架错误，不得加载其他用户数据
+            return LongTermMemoryContext.empty();
+        }
+    }
+
+    /**
+     * 从 LongTermMemoryContext 解析临时上下文消息列表。
+     */
+    private List<AgentMessage> resolveEphemeralContext(LongTermMemoryContext memoryContext) {
+        if (memoryContext.message().isPresent()) {
+            return List.of(memoryContext.message().get());
+        }
+        return List.of();
+    }
+
+    /**
+     * 从 LongTermMemoryContext 构建追踪。
+     */
+    private MemoryContextTrace buildMemoryTrace(LongTermMemoryContext memoryContext) {
+        if (memoryContext == LongTermMemoryContext.empty() && memoryContext.message().isEmpty()) {
+            // 空上下文时不需要 trace
+            return null;
+        }
+        return MemoryContextTrace.from(memoryContext, java.time.Instant.now());
+    }
+
+    /**
+     * 上下文关闭时手动插入临时记忆消息。
+     * 插入位置：全部 System 消息之后。
+     */
+    private List<AgentMessage> insertEphemeralWhenContextDisabled(
+            List<AgentMessage> fullHistory,
+            List<AgentMessage> ephemeralContextMessages) {
+        if (ephemeralContextMessages.isEmpty()) {
+            return fullHistory;
+        }
+        // 找到 System 消息的结束位置
+        int systemEndIndex = 0;
+        for (int i = 0; i < fullHistory.size(); i++) {
+            if (fullHistory.get(i) instanceof com.ksyun.agent.core.message.SystemAgentMessage) {
+                systemEndIndex = i + 1;
+            } else {
+                break;
+            }
+        }
+        List<AgentMessage> result = new ArrayList<>(fullHistory.size() + ephemeralContextMessages.size());
+        result.addAll(fullHistory.subList(0, systemEndIndex));
+        result.addAll(ephemeralContextMessages);
+        result.addAll(fullHistory.subList(systemEndIndex, fullHistory.size()));
         return result;
     }
 
@@ -196,8 +290,19 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                                                    ContextWindowSnapshot snapshot,
                                                    ContextProcessingTrace trace) {
         Map<String, Object> result = new java.util.HashMap<>(base);
-        result.put(CONTEXT_WINDOW_SNAPSHOT, snapshot);
-        result.put(LATEST_CONTEXT_TRACE, trace);
+        if (snapshot != null) {
+            result.put(CONTEXT_WINDOW_SNAPSHOT, snapshot);
+            result.put(LATEST_CONTEXT_TRACE, trace);
+        }
+        return result;
+    }
+
+    /**
+     * 将记忆追踪合并到结果 Map 中。
+     */
+    private Map<String, Object> mergeMemoryTrace(Map<String, Object> base, MemoryContextTrace memoryTrace) {
+        Map<String, Object> result = new java.util.HashMap<>(base);
+        result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
         return result;
     }
 

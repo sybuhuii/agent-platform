@@ -5,6 +5,7 @@ import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.store.CheckpointStore;
@@ -108,6 +109,7 @@ public class CheckpointResumeCoordinator {
                 checkpoint.userId(),
                 checkpoint.sessionId(),
                 checkpoint.executionType(),
+                checkpoint.purpose(),       // HITL_RECOVERY 保持不变
                 checkpoint.agentName(),
                 checkpoint.nodeName(),
                 checkpoint.stateData(),

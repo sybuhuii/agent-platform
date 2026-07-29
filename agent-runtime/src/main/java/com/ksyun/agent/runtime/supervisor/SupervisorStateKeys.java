@@ -42,6 +42,9 @@ public final class SupervisorStateKeys {
     public static final String CONTEXT_WINDOW_SNAPSHOT = "contextWindowSnapshot";
     public static final String LATEST_CONTEXT_TRACE = "latestContextTrace";
 
+    // ---- Phase8 Batch5 长期记忆上下文 ----
+    public static final String LATEST_MEMORY_CONTEXT_TRACE = "latestMemoryContextTrace";
+
     // ---- 类型安全读取方法 ----
 
     public static SupervisorDefinition getSupervisorDefinition(AgentState state) {
@@ -114,6 +117,13 @@ public final class SupervisorStateKeys {
      */
     public static com.ksyun.agent.core.context.ContextProcessingTrace getLatestContextTrace(AgentState state) {
         return state.<com.ksyun.agent.core.context.ContextProcessingTrace>value(LATEST_CONTEXT_TRACE).orElse(null);
+    }
+
+    /**
+     * 获取 Supervisor 最新长期记忆上下文追踪。初始为空。
+     */
+    public static com.ksyun.agent.runtime.memory.MemoryContextTrace getLatestMemoryContextTrace(AgentState state) {
+        return state.<com.ksyun.agent.runtime.memory.MemoryContextTrace>value(LATEST_MEMORY_CONTEXT_TRACE).orElse(null);
     }
 
     private static <T> T getRequired(AgentState state, String key, Class<T> type) {

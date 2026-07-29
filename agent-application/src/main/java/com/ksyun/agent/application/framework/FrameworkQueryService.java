@@ -11,6 +11,7 @@ import com.ksyun.agent.runtime.registry.SupervisorRegistry;
 import com.ksyun.agent.runtime.registry.ToolRegistry;
 
 import java.util.Collection;
+import java.util.List;
 
 /**
  * 框架查询服务，提供已注册 Agent、Tool 和 Supervisor 的查询能力。
@@ -25,11 +26,12 @@ public class FrameworkQueryService {
     private final ContextTrimmer contextTrimmer;
     private final TokenCounter tokenCounter;
     private final ContextConfig contextConfig;
+    private final MemoryConfig memoryConfig;
 
     public FrameworkQueryService(AgentRegistry agentRegistry,
                                   ToolRegistry toolRegistry,
                                   SupervisorRegistry supervisorRegistry) {
-        this(agentRegistry, toolRegistry, supervisorRegistry, null, null, null);
+        this(agentRegistry, toolRegistry, supervisorRegistry, null, null, null, null);
     }
 
     public FrameworkQueryService(AgentRegistry agentRegistry,
@@ -38,12 +40,23 @@ public class FrameworkQueryService {
                                   ContextTrimmer contextTrimmer,
                                   TokenCounter tokenCounter,
                                   ContextConfig contextConfig) {
+        this(agentRegistry, toolRegistry, supervisorRegistry, contextTrimmer, tokenCounter, contextConfig, null);
+    }
+
+    public FrameworkQueryService(AgentRegistry agentRegistry,
+                                  ToolRegistry toolRegistry,
+                                  SupervisorRegistry supervisorRegistry,
+                                  ContextTrimmer contextTrimmer,
+                                  TokenCounter tokenCounter,
+                                  ContextConfig contextConfig,
+                                  MemoryConfig memoryConfig) {
         this.agentRegistry = agentRegistry;
         this.toolRegistry = toolRegistry;
         this.supervisorRegistry = supervisorRegistry;
         this.contextTrimmer = contextTrimmer;
         this.tokenCounter = tokenCounter;
         this.contextConfig = contextConfig;
+        this.memoryConfig = memoryConfig;
     }
 
     /**
@@ -225,5 +238,162 @@ public class FrameworkQueryService {
             String summaryMessageMapping,
             boolean resultMetadataEnabled,
             boolean demoAvailable
+    ) {}
+
+    /**
+     * 查询框架长期记忆能力信息。
+     *
+     * @return 记忆能力信息
+     */
+    public MemoryCapabilityInfo getMemoryCapability() {
+        if (memoryConfig == null) {
+            return new MemoryCapabilityInfo(
+                    false, false, "none", "none", "none",
+                    false, false, false, false,
+                    "none", "none", false,
+                    // 线程续接能力：无配置时全部为 false
+                    false, false, false, false, false, false, false, false,
+                    false, false, false, false, "NONE",
+                    // Phase8 Batch5 长期记忆上下文：无配置时全部为默认
+                    false, false, false, false, false,
+                    false, "none", false, "none", List.of(), 0, 0
+            );
+        }
+        return new MemoryCapabilityInfo(
+                memoryConfig.enabled(),
+                memoryConfig.longTermMemoryAvailable(),
+                memoryConfig.backend(),
+                memoryConfig.defaultNamespace(),
+                memoryConfig.namespaceIsolation(),
+                memoryConfig.supportsPut(),
+                memoryConfig.supportsGet(),
+                memoryConfig.supportsList(),
+                memoryConfig.supportsDelete(),
+                memoryConfig.shortTermStore(),
+                memoryConfig.longTermStore(),
+                memoryConfig.storesSeparated(),
+                // Phase8 Batch3 线程续接能力
+                memoryConfig.reactThreadContinuationSupported(),
+                memoryConfig.agentApiAcceptsThreadId(),
+                memoryConfig.serverGeneratesThreadId(),
+                memoryConfig.newRunPerInvocation(),
+                memoryConfig.completeHistoryPreserved(),
+                memoryConfig.contextWindowSnapshotContinued(),
+                memoryConfig.sameThreadExecutionSerialized(),
+                memoryConfig.failedRunDoesNotOverwriteStableState(),
+                memoryConfig.supervisorThreadContinuationSupported(),
+                memoryConfig.supervisorApiAcceptsThreadId(),
+                memoryConfig.subAgentsUseFreshContext(),
+                memoryConfig.hitlResumeThreadSyncSupported(),
+                memoryConfig.hitlThreadSyncOrder(),
+                // Phase8 Batch5 长期记忆上下文
+                memoryConfig.longTermContextInjectionEnabled(),
+                memoryConfig.longTermContextAutoRead(),
+                memoryConfig.longTermContextEphemeral(),
+                memoryConfig.memoryContextStoredInThreadCheckpoint(),
+                memoryConfig.rememberToolEnabled(),
+                memoryConfig.rememberToolUsesAuthenticatedUser(),
+                memoryConfig.rememberToolName(),
+                memoryConfig.crossThreadMemorySupported(),
+                memoryConfig.crossUserIsolation(),
+                memoryConfig.memoryContextNamespaces(),
+                memoryConfig.memoryContextMaxEntries(),
+                memoryConfig.memoryContextMaxInjectedTokens()
+        );
+    }
+
+    /**
+     * 长期记忆配置值对象，由基础设施层从 MemoryProperties 构造后传入。
+     * <p>
+     * 纯值对象，不依赖 Spring 配置注解。
+     */
+    public record MemoryConfig(
+            boolean enabled,
+            boolean longTermMemoryAvailable,
+            String backend,
+            String defaultNamespace,
+            String namespaceIsolation,
+            boolean supportsPut,
+            boolean supportsGet,
+            boolean supportsList,
+            boolean supportsDelete,
+            String shortTermStore,
+            String longTermStore,
+            boolean storesSeparated,
+            // Phase8 Batch3 线程续接能力
+            boolean reactThreadContinuationSupported,
+            boolean agentApiAcceptsThreadId,
+            boolean serverGeneratesThreadId,
+            boolean newRunPerInvocation,
+            boolean completeHistoryPreserved,
+            boolean contextWindowSnapshotContinued,
+            boolean sameThreadExecutionSerialized,
+            boolean failedRunDoesNotOverwriteStableState,
+            boolean supervisorThreadContinuationSupported,
+            boolean supervisorApiAcceptsThreadId,
+            boolean subAgentsUseFreshContext,
+            boolean hitlResumeThreadSyncSupported,
+            String hitlThreadSyncOrder,
+            // Phase8 Batch5 长期记忆上下文
+            boolean longTermContextInjectionEnabled,
+            boolean longTermContextAutoRead,
+            boolean longTermContextEphemeral,
+            boolean memoryContextStoredInThreadCheckpoint,
+            boolean rememberToolEnabled,
+            boolean rememberToolUsesAuthenticatedUser,
+            String rememberToolName,
+            boolean crossThreadMemorySupported,
+            String crossUserIsolation,
+            List<String> memoryContextNamespaces,
+            int memoryContextMaxEntries,
+            int memoryContextMaxInjectedTokens
+    ) {}
+
+    /**
+     * 长期记忆能力信息。
+     * <p>
+     * 不暴露用户记忆内容、MemoryStore 内部 Map、Bean 完整类名、
+     * 用户数量、记忆数量或 API Key。
+     */
+    public record MemoryCapabilityInfo(
+            boolean enabled,
+            boolean longTermMemoryAvailable,
+            String backend,
+            String defaultNamespace,
+            String namespaceIsolation,
+            boolean supportsPut,
+            boolean supportsGet,
+            boolean supportsList,
+            boolean supportsDelete,
+            String shortTermStore,
+            String longTermStore,
+            boolean storesSeparated,
+            // Phase8 Batch3 线程续接能力
+            boolean reactThreadContinuationSupported,
+            boolean agentApiAcceptsThreadId,
+            boolean serverGeneratesThreadId,
+            boolean newRunPerInvocation,
+            boolean completeHistoryPreserved,
+            boolean contextWindowSnapshotContinued,
+            boolean sameThreadExecutionSerialized,
+            boolean failedRunDoesNotOverwriteStableState,
+            boolean supervisorThreadContinuationSupported,
+            boolean supervisorApiAcceptsThreadId,
+            boolean subAgentsUseFreshContext,
+            boolean hitlResumeThreadSyncSupported,
+            String hitlThreadSyncOrder,
+            // Phase8 Batch5 长期记忆上下文
+            boolean longTermContextInjectionEnabled,
+            boolean longTermContextAutoRead,
+            boolean longTermContextEphemeral,
+            boolean memoryContextStoredInThreadCheckpoint,
+            boolean rememberToolEnabled,
+            boolean rememberToolUsesAuthenticatedUser,
+            String rememberToolName,
+            boolean crossThreadMemorySupported,
+            String crossUserIsolation,
+            List<String> memoryContextNamespaces,
+            int memoryContextMaxEntries,
+            int memoryContextMaxInjectedTokens
     ) {}
 }

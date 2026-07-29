@@ -4,7 +4,9 @@ import com.ksyun.agent.core.approval.ApprovalStatus;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
+import com.ksyun.agent.core.run.ThreadCheckpointKey;
 import com.ksyun.agent.core.store.CheckpointStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,9 +24,10 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * 内存 Checkpoint 存储实现。
  * <p>
- * 双索引 ConcurrentHashMap：
+ * 三索引 ConcurrentHashMap：
  * - byRunId: runId -> AgentCheckpoint 主索引
- * - byThreadId: threadId -> Set<runId> 辅助索引
+ * - byThreadId: threadId -> Set<runId> 辅助索引（旧HITL兼容）
+ * - byThreadKey: ThreadCheckpointKey(userId,threadId,purpose) -> Set<runId> 线程辅助索引
  * <p>
  * 并发控制策略：
  * - 使用按 runId 分段锁（StripedLock），同一 runId 串行写，不同 runId 并发
@@ -32,11 +35,17 @@ import java.util.concurrent.locks.ReentrantLock;
  * - 不使用 JVM 全局锁
  * - 不使用 ThreadLocal
  * - 读操作无锁，依赖 ConcurrentHashMap 原子方法
- * - 主索引和 threadId 索引在同一分段锁内更新，保持一致
+ * - 主索引、threadId 索引和 ThreadCheckpointKey 索引在同一分段锁内更新，保持一致
  * - 分段锁使用 ConcurrentHashMap + ReentrantLock，锁对象懒创建并自动清理
  * <p>
  * 稳定身份约束（条件更新时拒绝变化）：
- * - runId, checkpointId, threadId, userId, sessionId, executionType, agentName, createdAt
+ * - runId, checkpointId, threadId, userId, sessionId, executionType, purpose, agentName, createdAt
+ * <p>
+ * ThreadCheckpointKey 索引维护：
+ * - purpose 发生变化时正确移除旧索引并加入新索引
+ * - 辅助索引不得保留已删除 Checkpoint ID
+ * - 索引集合为空时删除 ThreadCheckpointKey
+ * - 不得让索引 Key 无限残留
  * <p>
  * version 条件更新策略：
  * - save 只负责首次创建
@@ -47,11 +56,12 @@ import java.util.concurrent.locks.ReentrantLock;
  * - updateIfVersionMatches: expectedVersion 匹配则更新并 version+1，否则返回 false
  * <p>
  * 幂等判断：必须比较完整业务内容，至少包括稳定身份、status、version、nodeName、
- * pendingApproval、stateData、createdAt、updatedAt。
+ * pendingApproval、stateData、createdAt、updatedAt、purpose。
  * <p>
  * 不自动清理过期 Checkpoint。不添加 @Component，通过 @Bean 装配。
  * delete 不存在时幂等。load 返回完整不可变快照。
  * findPendingByUserId 只返回 userId 精确匹配 + SUSPENDED + PENDING，按 createdAt 升序。
+ * 待审批查询不得返回 THREAD_MEMORY。
  */
 public class InMemoryCheckpointStore implements CheckpointStore {
 
@@ -63,8 +73,11 @@ public class InMemoryCheckpointStore implements CheckpointStore {
     /** runId -> AgentCheckpoint 主索引 */
     private final ConcurrentHashMap<String, AgentCheckpoint> byRunId = new ConcurrentHashMap<>();
 
-    /** threadId -> Set<runId> 辅助索引 */
+    /** threadId -> Set<runId> 辅助索引（旧HITL兼容） */
     private final ConcurrentHashMap<String, java.util.Set<String>> byThreadId = new ConcurrentHashMap<>();
+
+    /** ThreadCheckpointKey(userId,threadId,purpose) -> Set<runId> 线程辅助索引 */
+    private final ConcurrentHashMap<ThreadCheckpointKey, java.util.Set<String>> byThreadKey = new ConcurrentHashMap<>();
 
     /** 按 runId hash 分段锁 */
     private final ReentrantLock[] stripes = new ReentrantLock[STRIPE_COUNT];
@@ -105,9 +118,11 @@ public class InMemoryCheckpointStore implements CheckpointStore {
                             "New checkpoint version must be 0, got " + checkpoint.version());
                 }
                 byRunId.put(runId, checkpoint);
-                // 维护 threadId 辅助索引
+                // 维护旧 threadId 辅助索引
                 byThreadId.computeIfAbsent(checkpoint.threadId(), k -> ConcurrentHashMap.newKeySet())
                         .add(runId);
+                // 维护线程辅助索引
+                addToThreadKeyIndex(checkpoint, runId);
             } else {
                 // 相同完整业务内容重复 save 可幂等
                 if (isSameContent(existing, checkpoint)) {
@@ -123,8 +138,8 @@ public class InMemoryCheckpointStore implements CheckpointStore {
             lock.unlock();
         }
 
-        log.debug("Checkpoint saved: runId={}, version={}, status={}",
-                runId, checkpoint.version(), checkpoint.status());
+        log.debug("Checkpoint saved: runId={}, version={}, status={}, purpose={}",
+                runId, checkpoint.version(), checkpoint.status(), checkpoint.purpose());
     }
 
     @Override
@@ -208,13 +223,20 @@ public class InMemoryCheckpointStore implements CheckpointStore {
                     || !existing.userId().equals(checkpoint.userId())
                     || !existing.sessionId().equals(checkpoint.sessionId())
                     || existing.executionType() != checkpoint.executionType()
+                    || existing.purpose() != checkpoint.purpose()
                     || !existing.agentName().equals(checkpoint.agentName())
                     || !existing.createdAt().equals(checkpoint.createdAt())) {
                 log.warn("Checkpoint stable identity fields changed during update: runId={}", runId);
                 return false;
             }
 
-            // threadId 不得变化，无需更新索引
+            // threadId 不变化，无需更新旧索引
+
+            // purpose 发生变化时正确移除旧索引并加入新索引
+            if (existing.purpose() != checkpoint.purpose()) {
+                removeFromThreadKeyIndex(existing, runId);
+                addToThreadKeyIndex(checkpoint, runId);
+            }
 
             // 更新主存储
             byRunId.put(runId, checkpoint);
@@ -236,6 +258,7 @@ public class InMemoryCheckpointStore implements CheckpointStore {
             AgentCheckpoint removed = byRunId.remove(runId);
             if (removed != null) {
                 removeFromThreadIdIndex(removed.threadId(), runId);
+                removeFromThreadKeyIndex(removed, runId);
             }
         } finally {
             lock.unlock();
@@ -273,6 +296,7 @@ public class InMemoryCheckpointStore implements CheckpointStore {
             AgentCheckpoint removed = byRunId.remove(runId);
             if (removed != null) {
                 removeFromThreadIdIndex(removed.threadId(), runId);
+                removeFromThreadKeyIndex(removed, runId);
             }
             return true;
         } finally {
@@ -292,8 +316,8 @@ public class InMemoryCheckpointStore implements CheckpointStore {
         }
 
         List<AgentCheckpoint> results = new ArrayList<>();
-        for (String runId : runIds) {
-            AgentCheckpoint cp = byRunId.get(runId);
+        for (String rid : runIds) {
+            AgentCheckpoint cp = byRunId.get(rid);
             if (cp != null) {
                 results.add(cp);
             }
@@ -316,11 +340,13 @@ public class InMemoryCheckpointStore implements CheckpointStore {
         }
 
         int count = 0;
-        for (String runId : runIds) {
-            ReentrantLock lock = stripeLock(runId);
+        for (String rid : runIds) {
+            ReentrantLock lock = stripeLock(rid);
             lock.lock();
             try {
-                if (byRunId.remove(runId) != null) {
+                AgentCheckpoint removed = byRunId.remove(rid);
+                if (removed != null) {
+                    removeFromThreadKeyIndex(removed, rid);
                     count++;
                 }
             } finally {
@@ -333,6 +359,63 @@ public class InMemoryCheckpointStore implements CheckpointStore {
         }
         return count;
     }
+
+    // --- 新增线程查询方法（按 userId + threadId + purpose） ---
+
+    @Override
+    public List<AgentCheckpoint> findByThreadId(String userId, String threadId, CheckpointPurpose purpose) {
+        if (userId == null || userId.isBlank()
+                || threadId == null || threadId.isBlank()
+                || purpose == null) {
+            return List.of();
+        }
+
+        ThreadCheckpointKey key = new ThreadCheckpointKey(userId.trim(), threadId.trim(), purpose);
+        java.util.Set<String> runIds = byThreadKey.get(key);
+        if (runIds == null || runIds.isEmpty()) {
+            return List.of();
+        }
+
+        // 过滤不存在的主索引记录
+        List<AgentCheckpoint> results = new ArrayList<>();
+        for (String rid : runIds) {
+            AgentCheckpoint cp = byRunId.get(rid);
+            if (cp != null) {
+                results.add(cp);
+            }
+        }
+
+        results.sort(Comparator.comparing(AgentCheckpoint::updatedAt));
+        return Collections.unmodifiableList(results);
+    }
+
+    @Override
+    public Optional<AgentCheckpoint> loadLatestByThreadId(String userId, String threadId, CheckpointPurpose purpose) {
+        if (userId == null || userId.isBlank()
+                || threadId == null || threadId.isBlank()
+                || purpose == null) {
+            return Optional.empty();
+        }
+
+        ThreadCheckpointKey key = new ThreadCheckpointKey(userId.trim(), threadId.trim(), purpose);
+        java.util.Set<String> runIds = byThreadKey.get(key);
+        if (runIds == null || runIds.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // 使用稳定比较器：优先 updatedAt，其次 version，其次 checkpointId
+        Comparator<AgentCheckpoint> stableComparator = Comparator
+                .comparing(AgentCheckpoint::updatedAt, Comparator.reverseOrder())
+                .thenComparing(AgentCheckpoint::version, Comparator.reverseOrder())
+                .thenComparing(AgentCheckpoint::checkpointId);
+
+        return runIds.stream()
+                .map(byRunId::get)
+                .filter(Objects::nonNull)
+                .max(stableComparator);
+    }
+
+    // --- 内部索引维护方法 ---
 
     /**
      * 从 threadId 辅助索引中移除 runId。必须在对应 runId 的分段锁内调用。
@@ -348,10 +431,35 @@ public class InMemoryCheckpointStore implements CheckpointStore {
     }
 
     /**
+     * 将 Checkpoint 加入 ThreadCheckpointKey 索引。必须在对应 runId 的分段锁内调用。
+     */
+    private void addToThreadKeyIndex(AgentCheckpoint checkpoint, String runId) {
+        ThreadCheckpointKey key = new ThreadCheckpointKey(
+                checkpoint.userId(), checkpoint.threadId(), checkpoint.purpose());
+        byThreadKey.computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet())
+                .add(runId);
+    }
+
+    /**
+     * 从 ThreadCheckpointKey 索引中移除 runId。必须在对应 runId 的分段锁内调用。
+     */
+    private void removeFromThreadKeyIndex(AgentCheckpoint checkpoint, String runId) {
+        ThreadCheckpointKey key = new ThreadCheckpointKey(
+                checkpoint.userId(), checkpoint.threadId(), checkpoint.purpose());
+        java.util.Set<String> runIds = byThreadKey.get(key);
+        if (runIds != null) {
+            runIds.remove(runId);
+            if (runIds.isEmpty()) {
+                byThreadKey.remove(key);
+            }
+        }
+    }
+
+    /**
      * 判断两个 Checkpoint 完整业务内容是否相同（用于幂等判断）。
      * <p>
      * 必须比较完整业务内容，至少包括：稳定身份、status、version、nodeName、
-     * pendingApproval、stateData、createdAt、updatedAt。
+     * pendingApproval、stateData、createdAt、updatedAt、purpose。
      * 内容不同必须返回 false，不能静默当成相同保存。
      */
     private boolean isSameContent(AgentCheckpoint a, AgentCheckpoint b) {
@@ -361,6 +469,7 @@ public class InMemoryCheckpointStore implements CheckpointStore {
                 && a.userId().equals(b.userId())
                 && a.sessionId().equals(b.sessionId())
                 && a.executionType() == b.executionType()
+                && a.purpose() == b.purpose()
                 && a.agentName().equals(b.agentName())
                 && a.nodeName().equals(b.nodeName())
                 && a.status() == b.status()
