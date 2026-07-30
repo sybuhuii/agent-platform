@@ -45,6 +45,29 @@ agent:
       max-summary-tokens: ${AGENT_CONTEXT_SUMMARY_MAX_TOKENS:512}
       recent-groups-to-preserve: ${AGENT_CONTEXT_SUMMARY_RECENT_GROUPS:4}
 
+  memory:
+    enabled: ${AGENT_MEMORY_ENABLED:true}
+    backend: ${AGENT_MEMORY_BACKEND:in-memory}
+    default-namespace: ${AGENT_MEMORY_DEFAULT_NAMESPACE:profile}
+    max-namespace-length: ${AGENT_MEMORY_MAX_NAMESPACE_LENGTH:64}
+    max-key-length: ${AGENT_MEMORY_MAX_KEY_LENGTH:128}
+    max-value-length: ${AGENT_MEMORY_MAX_VALUE_LENGTH:4096}
+    max-metadata-entries: ${AGENT_MEMORY_MAX_METADATA_ENTRIES:16}
+    max-metadata-key-length: ${AGENT_MEMORY_MAX_METADATA_KEY_LENGTH:64}
+    max-metadata-value-length: ${AGENT_MEMORY_MAX_METADATA_VALUE_LENGTH:256}
+    context:
+      enabled: ${AGENT_MEMORY_CONTEXT_ENABLED:true}
+      namespaces:
+        - rules
+        - preferences
+        - profile
+        - facts
+      max-entries: ${AGENT_MEMORY_CONTEXT_MAX_ENTRIES:20}
+      max-injected-tokens: ${AGENT_MEMORY_CONTEXT_MAX_INJECTED_TOKENS:1024}
+    tools:
+      remember-enabled: ${AGENT_MEMORY_REMEMBER_TOOL_ENABLED:true}
+
+
   security:
     session:
       ttl: ${AGENT_SESSION_TTL:PT8H}

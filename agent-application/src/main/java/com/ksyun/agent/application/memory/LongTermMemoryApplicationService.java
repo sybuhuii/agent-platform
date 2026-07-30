@@ -5,6 +5,8 @@ import com.ksyun.agent.core.memory.MemoryIdGenerator;
 import com.ksyun.agent.core.memory.MemoryStoreKey;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.store.MemoryStore;
+import com.ksyun.agent.core.exception.AgentErrorCode;
+import com.ksyun.agent.core.exception.AgentFrameworkException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -99,8 +101,17 @@ public class LongTermMemoryApplicationService {
                 now
         );
 
-        MemoryEntry stored = memoryStore.put(entry);
-        return MemoryView.from(stored);
+        try {
+            MemoryEntry stored = memoryStore.put(entry);
+            return MemoryView.from(stored);
+        } catch (AgentFrameworkException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.MEMORY_STORE_FAILED,
+                    "Failed to save long-term memory",
+                    e);
+        }
     }
 
     /**
@@ -111,16 +122,32 @@ public class LongTermMemoryApplicationService {
      * @param key       记忆键
      * @return 记忆视图，不存在返回 Optional.empty()
      */
-    public Optional<MemoryView> get(UserSession operator, String namespace, String key) {
-        Objects.requireNonNull(operator, "operator must not be null");
+    public Optional<MemoryView> get(
+            UserSession operator,
+            String namespace,
+            String key
+    ) {
+        Objects.requireNonNull(
+                operator,
+                "operator must not be null");
 
-        if (namespace == null || namespace.isBlank() || key == null || key.isBlank()) {
-            return Optional.empty();
+        validator.validateNamespace(namespace);
+        validator.validateKey(key);
+
+        try {
+            return memoryStore.get(
+                            operator.userId(),
+                            namespace.trim(),
+                            key.trim())
+                    .map(MemoryView::from);
+        } catch (AgentFrameworkException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.MEMORY_STORE_FAILED,
+                    "Failed to read long-term memory",
+                    e);
         }
-
-        String userId = operator.userId();
-        Optional<MemoryEntry> entry = memoryStore.get(userId, namespace.trim(), key.trim());
-        return entry.map(MemoryView::from);
     }
 
     /**
@@ -130,18 +157,31 @@ public class LongTermMemoryApplicationService {
      * @param namespace 命名空间
      * @return 不可变记忆视图集合
      */
-    public Collection<MemoryView> list(UserSession operator, String namespace) {
-        Objects.requireNonNull(operator, "operator must not be null");
+    public Collection<MemoryView> list(
+            UserSession operator,
+            String namespace
+    ) {
+        Objects.requireNonNull(
+                operator,
+                "operator must not be null");
 
-        if (namespace == null || namespace.isBlank()) {
-            return java.util.List.of();
+        validator.validateNamespace(namespace);
+
+        try {
+            return memoryStore.list(
+                            operator.userId(),
+                            namespace.trim())
+                    .stream()
+                    .map(MemoryView::from)
+                    .toList();
+        } catch (AgentFrameworkException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.MEMORY_STORE_FAILED,
+                    "Failed to list long-term memory",
+                    e);
         }
-
-        String userId = operator.userId();
-        Collection<MemoryEntry> entries = memoryStore.list(userId, namespace.trim());
-        return entries.stream()
-                .map(MemoryView::from)
-                .toList();
     }
 
     /**
@@ -152,14 +192,30 @@ public class LongTermMemoryApplicationService {
      * @param key       记忆键
      * @return true 表示已删除，false 表示不存在
      */
-    public boolean delete(UserSession operator, String namespace, String key) {
-        Objects.requireNonNull(operator, "operator must not be null");
+    public boolean delete(
+            UserSession operator,
+            String namespace,
+            String key
+    ) {
+        Objects.requireNonNull(
+                operator,
+                "operator must not be null");
 
-        if (namespace == null || namespace.isBlank() || key == null || key.isBlank()) {
-            return false;
+        validator.validateNamespace(namespace);
+        validator.validateKey(key);
+
+        try {
+            return memoryStore.delete(
+                    operator.userId(),
+                    namespace.trim(),
+                    key.trim());
+        } catch (AgentFrameworkException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.MEMORY_STORE_FAILED,
+                    "Failed to delete long-term memory",
+                    e);
         }
-
-        String userId = operator.userId();
-        return memoryStore.delete(userId, namespace.trim(), key.trim());
     }
 }

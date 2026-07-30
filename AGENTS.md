@@ -179,12 +179,10 @@
 ## 17.API与前端
 1.Controller使用专门请求/响应DTO，不直接返回内部领域实现和第三方对象。
 2.客户端Body禁止提交userId、sessionId、roles、permissions、systemPrompt、allowedTools、memberAgents、maxIterations和credentialHash。
-3.前端使用Vue3+Vite+JavaScript，禁止TypeScript，除非用户明确改变。
-4.前端不得直连模型、保存API Key、密码、hash或把sessionId放进URL/Body。
-5.Session访问、HTTP客户端、401/403处理必须集中封装。
-6.前端权限判断只用于展示和导航，后端始终是最终安全边界。
-7.正式前端不得调用`/api/dev/**`。
-8.涉及前端修改时必须执行真实构建。
+3.前端不得直连模型、保存API Key、密码、hash或把sessionId放进URL/Body。
+4.Session访问、HTTP客户端、401/403处理必须集中封装。
+5.前端权限判断只用于展示和导航，后端始终是最终安全边界。
+6.涉及前端修改时必须执行真实构建。
 
 ## 18.配置与Sample
 1.禁止提交真实API Key、密码、私钥、固定sessionId和敏感`.env`。

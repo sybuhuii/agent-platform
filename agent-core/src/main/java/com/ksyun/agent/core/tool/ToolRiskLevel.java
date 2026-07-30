@@ -5,6 +5,7 @@ package com.ksyun.agent.core.tool;
  */
 public enum ToolRiskLevel {
 
+    SAFE,
     LOW,
     MEDIUM,
     HIGH

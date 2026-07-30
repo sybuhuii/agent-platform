@@ -3,6 +3,7 @@ package com.ksyun.agent.core.tool;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.Map;
+import java.util.LinkedHashMap;
 
 /**
  * 工具调用请求。
@@ -21,6 +22,8 @@ public record ToolCall(
     private static final long serialVersionUID = 1L;
 
     public ToolCall {
-        arguments = arguments == null ? Map.of() : Collections.unmodifiableMap(arguments);
+        arguments = arguments == null
+                ? Map.of()
+                : Collections.unmodifiableMap(new LinkedHashMap<>(arguments));
     }
 }

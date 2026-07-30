@@ -9,6 +9,7 @@ import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.ksyun.agent.runtime.memory.MemoryContextTrace;
 
 import java.util.Map;
 
@@ -43,6 +44,12 @@ public class DefaultReactFailureNode implements ReactFailureNode {
         // 合并上下文处理追踪到 metadata（框架失败前可能已存在 Trace）
         ContextProcessingTrace trace = getLatestContextTrace(state);
         Map<String, Object> metadata = ContextMetadataHelper.mergeContextMetadata(Map.of(), trace);
+
+        MemoryContextTrace memoryTrace =
+                getLatestMemoryContextTrace(state);
+        metadata = ContextMetadataHelper.mergeMemoryMetadata(
+                metadata,
+                memoryTrace);
 
         AgentResult result = new AgentResult(
                 definition.name(),

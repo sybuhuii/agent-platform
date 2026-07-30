@@ -87,8 +87,10 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public CheckpointValidator checkpointValidator() {
-        return new CheckpointValidator();
+    public CheckpointValidator checkpointValidator(
+            com.ksyun.agent.runtime.checkpoint.thread.ThreadCheckpointStateMapper threadStateMapper
+    ) {
+        return new CheckpointValidator(threadStateMapper);
     }
 
     @Bean

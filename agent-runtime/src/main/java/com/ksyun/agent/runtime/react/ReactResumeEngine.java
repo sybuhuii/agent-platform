@@ -201,10 +201,11 @@ public class ReactResumeEngine {
         }
 
         // 4. 处理 Checkpoint 生命周期
-        handleLifecycle(runId, resumingCheckpoint, finalResult);
+
 
         // 5. 判断是否可提取稳定线程状态
         Optional<ThreadConversationState> conversationState = Optional.empty();
+
         if (persistencePolicy.isPersistable(finalResult, finalState)) {
             try {
                 conversationState = Optional.of(
@@ -216,47 +217,41 @@ public class ReactResumeEngine {
                         )
                 );
             } catch (AgentFrameworkException e) {
-                log.warn("Resume stable state extraction failed: runId={}, errorCode={}",
-                        runId, e.getErrorCode());
-                conversationState = Optional.empty();
+                log.error(
+                        "Resume stable state extraction failed: runId={}, errorCode={}",
+                        runId,
+                        e.getErrorCode());
+
+                try {
+                    lifecycleService.fail(
+                            resumingCheckpoint,
+                            AgentErrorCode.THREAD_CHECKPOINT_INVALID);
+                } catch (AgentFrameworkException lifecycleException) {
+                    log.warn(
+                            "Failed to mark checkpoint after state extraction error: runId={}",
+                            runId);
+                }
+
+                throw e;
             }
-        }
-
-        return new ThreadExecutionOutcome(finalResult, conversationState);
-    }
-
-    /**
-     * 根据 AgentResult 状态处理 Checkpoint 生命周期。
-     */
-    private void handleLifecycle(String runId, AgentCheckpoint resumingCheckpoint, AgentResult finalResult) {
-        if (finalResult.status() == RunStatus.SUSPENDED) {
-            log.info("Resume resulted in re-suspension: runId={}", runId);
-            return;
-        }
-
-        if (finalResult.status() == RunStatus.COMPLETED) {
-            try {
-                lifecycleService.complete(resumingCheckpoint);
-            } catch (AgentFrameworkException e) {
-                log.warn("Lifecycle complete conflicted: runId={}, errorCode={}", runId, e.getErrorCode());
-            }
-            return;
         }
 
         if (finalResult.status() == RunStatus.FAILED) {
             try {
-                lifecycleService.fail(resumingCheckpoint, AgentErrorCode.RESUME_FAILED);
+                lifecycleService.fail(
+                        resumingCheckpoint,
+                        AgentErrorCode.RESUME_FAILED);
             } catch (AgentFrameworkException e) {
-                log.warn("Lifecycle fail also conflicted: runId={}", runId, e.getErrorCode());
+                log.warn(
+                        "Lifecycle fail conflicted: runId={}, errorCode={}",
+                        runId,
+                        e.getErrorCode());
             }
-            return;
         }
 
-        try {
-            lifecycleService.complete(resumingCheckpoint);
-        } catch (AgentFrameworkException e) {
-            log.warn("Lifecycle complete conflicted: runId={}, errorCode={}", runId, e.getErrorCode());
-        }
+        return new ThreadExecutionOutcome(
+                finalResult,
+                conversationState);
     }
 
     private AgentResult getFinalResult(ReactAgentState state) {

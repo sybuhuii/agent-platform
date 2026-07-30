@@ -140,7 +140,8 @@ public class ReactAgentGraphFactory {
                 Map.entry(RUN_STATUS, Channels.base((oldVal, newVal) -> newVal)),
                 // Phase7 Batch4 上下文窗口 Channel（覆盖语义）
                 Map.entry(CONTEXT_WINDOW_SNAPSHOT, Channels.base((oldVal, newVal) -> newVal)),
-                Map.entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal))
+                Map.entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal)),
+                Map.entry(LATEST_MEMORY_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal))
         );
     }
 

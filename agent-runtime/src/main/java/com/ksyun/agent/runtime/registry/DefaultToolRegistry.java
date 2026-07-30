@@ -5,7 +5,7 @@ import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.tool.AgentTool;
 
 import java.util.Collection;
-import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -57,9 +57,8 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     @Override
     public Collection<AgentTool> list() {
-        return Collections.unmodifiableCollection(tools.values());
+        return List.copyOf(tools.values());
     }
-
     @Override
     public boolean contains(String name) {
         if (name == null || name.isBlank()) {

@@ -22,7 +22,10 @@ public record ContextManagementPolicy(
         boolean systemPromptAlwaysPreserved,
         boolean latestUserInputPreserved,
         boolean atomicGroupOvershoot
-) {
+) implements java.io.Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     /** 默认策略：MAX_MESSAGES=20，System保留，最新用户输入保留，允许overshoot */
     public static final ContextManagementPolicy DEFAULT = new ContextManagementPolicy(

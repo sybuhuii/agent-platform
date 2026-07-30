@@ -208,7 +208,7 @@ public class MemoryProperties {
         }
 
         public List<String> getNamespaces() {
-            return namespaces;
+            return List.copyOf(namespaces);
         }
 
         public void setNamespaces(List<String> namespaces) {
@@ -226,7 +226,10 @@ public class MemoryProperties {
                             "agent.memory.context.namespaces must match namespace rules, got: " + ns);
                 }
             }
-            this.namespaces = new ArrayList<>(namespaces);
+            this.namespaces = namespaces.stream()
+                    .map(String::trim)
+                    .distinct()
+                    .toList();
         }
 
         public int getMaxEntries() {

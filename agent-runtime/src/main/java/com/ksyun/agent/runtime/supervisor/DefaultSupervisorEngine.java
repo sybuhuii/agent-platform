@@ -121,10 +121,12 @@ public class DefaultSupervisorEngine implements SupervisorEngine {
                         )
                 );
             } catch (AgentFrameworkException e) {
-                // 状态映射失败，conversationState 为空
-                log.warn("Supervisor stable state extraction failed: runId={}, errorCode={}",
-                        context.runId(), e.getErrorCode());
-                conversationState = Optional.empty();
+                log.error(
+                        "Supervisor stable state extraction failed: "
+                                + "runId={}, errorCode={}",
+                        context.runId(),
+                        e.getErrorCode());
+                throw e;
             }
         }
 

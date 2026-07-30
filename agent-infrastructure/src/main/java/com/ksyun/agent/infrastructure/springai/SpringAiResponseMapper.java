@@ -34,8 +34,6 @@ public class SpringAiResponseMapper {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private static final Map<String, Object> EMPTY_METADATA = Map.of();
-
     /**
      * 将 Spring AI ChatResponse 转换为框架 ModelResponse。
      */
@@ -43,57 +41,131 @@ public class SpringAiResponseMapper {
         if (chatResponse == null) {
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
-                    "ChatResponse is null"
-            );
+                    "ChatResponse is null");
         }
 
         Generation generation = chatResponse.getResult();
-        if (generation == null || generation.getOutput() == null) {
-            // 既无文本也无 ToolCall，返回安全的空 Assistant 消息
+
+        if (generation == null
+                || generation.getOutput() == null) {
             return new ModelResponse(
                     new AssistantAgentMessage("", List.of()),
                     buildSafeTokenUsage(null),
-                    buildMetadata(chatResponse, false)
-            );
+                    buildMetadata(chatResponse, false));
         }
 
-        AssistantMessage assistantMessage = generation.getOutput();
-        String content = assistantMessage.getText() != null ? assistantMessage.getText() : "";
+        AssistantMessage assistantMessage =
+                generation.getOutput();
 
-        // 提取全部 ToolCall，不只取第一个
-        List<ToolCall> toolCalls = mapToolCalls(assistantMessage);
+        String content =
+                assistantMessage.getText() != null
+                        ? assistantMessage.getText()
+                        : "";
 
-        // 没有文本但存在 ToolCall 属于合法响应
-        AssistantAgentMessage frameworkMessage = new AssistantAgentMessage(content, toolCalls);
+        ToolCallMapping toolCallMapping =
+                mapToolCalls(assistantMessage);
 
-        TokenUsage tokenUsage = buildSafeTokenUsage(chatResponse.getMetadata() != null
-                ? chatResponse.getMetadata().getUsage() : null);
+        AssistantAgentMessage frameworkMessage =
+                new AssistantAgentMessage(
+                        content,
+                        toolCallMapping.toolCalls());
 
-        Map<String, Object> metadata = buildMetadata(chatResponse, true);
+        Usage usage =
+                chatResponse.getMetadata() != null
+                        ? chatResponse.getMetadata().getUsage()
+                        : null;
 
-        return new ModelResponse(frameworkMessage, tokenUsage, metadata);
+        TokenUsage tokenUsage =
+                buildSafeTokenUsage(usage);
+
+        Map<String, Object> metadata =
+                buildMetadata(
+                        chatResponse,
+                        toolCallMapping.fallbackIdGenerated());
+
+        return new ModelResponse(
+                frameworkMessage,
+                tokenUsage,
+                metadata);
     }
+    private ToolCallMapping mapToolCalls(
+            AssistantMessage assistantMessage
+    ) {
+        List<AssistantMessage.ToolCall> springAiToolCalls =
+                assistantMessage.getToolCalls();
 
-    private List<ToolCall> mapToolCalls(AssistantMessage assistantMessage) {
-        List<AssistantMessage.ToolCall> springAiToolCalls = assistantMessage.getToolCalls();
-        if (springAiToolCalls == null || springAiToolCalls.isEmpty()) {
-            return List.of();
+        if (springAiToolCalls == null
+                || springAiToolCalls.isEmpty()) {
+            return new ToolCallMapping(List.of(), false);
         }
 
-        return springAiToolCalls.stream()
-                .map(this::mapToolCall)
-                .toList();
+        List<ToolCall> toolCalls =
+                new java.util.ArrayList<>();
+
+        boolean fallbackIdGenerated = false;
+
+        for (int index = 0;
+             index < springAiToolCalls.size();
+             index++) {
+
+            AssistantMessage.ToolCall source =
+                    springAiToolCalls.get(index);
+
+            MappedToolCall mapped =
+                    mapToolCall(source, index);
+
+            toolCalls.add(mapped.toolCall());
+
+            if (mapped.fallbackIdGenerated()) {
+                fallbackIdGenerated = true;
+            }
+        }
+
+        return new ToolCallMapping(
+                List.copyOf(toolCalls),
+                fallbackIdGenerated);
     }
 
-    private ToolCall mapToolCall(AssistantMessage.ToolCall springAiToolCall) {
+    private MappedToolCall mapToolCall(
+            AssistantMessage.ToolCall springAiToolCall,
+            int index
+    ) {
         String id = springAiToolCall.id();
-        // 若供应商未返回 ID，生成当前响应内唯一且稳定的替代 ID
-        if (id == null || id.isBlank()) {
-            id = "tc_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        boolean fallbackIdGenerated =
+                id == null || id.isBlank();
+
+        if (fallbackIdGenerated) {
+            /*
+             * 使用调用名称、参数和序号生成确定性 ID。
+             * 同一个响应被重复映射时仍会得到相同 ID。
+             */
+            String seed =
+                    String.valueOf(springAiToolCall.name())
+                            + "\u0000"
+                            + String.valueOf(
+                            springAiToolCall.arguments())
+                            + "\u0000"
+                            + index;
+
+            id = "tc_fallback_"
+                    + UUID.nameUUIDFromBytes(
+                            seed.getBytes(
+                                    java.nio.charset.StandardCharsets.UTF_8))
+                    .toString()
+                    .replace("-", "")
+                    .substring(0, 16);
         }
 
-        Map<String, Object> arguments = parseArguments(springAiToolCall.arguments());
-        return new ToolCall(id, springAiToolCall.name(), arguments);
+        Map<String, Object> arguments =
+                parseArguments(
+                        springAiToolCall.arguments());
+
+        return new MappedToolCall(
+                new ToolCall(
+                        id,
+                        springAiToolCall.name(),
+                        arguments),
+                fallbackIdGenerated);
     }
 
     /**
@@ -110,64 +182,118 @@ public class SpringAiResponseMapper {
             );
             return parsed != null ? Collections.unmodifiableMap(parsed) : Map.of();
         } catch (Exception e) {
-            // 供应商返回无法解析的 ToolCall 参数
-            log.warn("Failed to parse tool call arguments, marking as parse failure: {}", e.getMessage());
+            /*
+             * 不记录原始参数和 Jackson 错误正文，
+             * 因为错误正文可能包含模型返回的参数片段。
+             */
+            log.warn(
+                    "Failed to parse tool call arguments: errorType={}",
+                    e.getClass().getSimpleName());
+
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
-                    "Failed to parse tool call arguments: " + e.getMessage()
-            );
+                    "Failed to parse tool call arguments",
+                    e);
         }
     }
 
     /**
      * 构建 TokenUsage。供应商未返回 Token 用量时使用安全默认值。
      */
+    private Map<String, Object> buildMetadata(
+            ChatResponse chatResponse,
+            boolean fallbackToolCallIdGenerated
+    ) {
+        Map<String, Object> metadata =
+                new HashMap<>();
+
+        if (chatResponse.getMetadata() != null) {
+            if (chatResponse.getMetadata().getModel()
+                    != null) {
+                metadata.put(
+                        "model",
+                        chatResponse.getMetadata().getModel());
+            }
+
+            if (chatResponse.getMetadata().getId()
+                    != null) {
+                metadata.put(
+                        "responseId",
+                        chatResponse.getMetadata().getId());
+            }
+        }
+
+        /*
+         * metadata 整体为空，或者其中没有 usage，
+         * 都必须标记 usageUnavailable。
+         */
+        if (chatResponse.getMetadata() == null
+                || chatResponse.getMetadata().getUsage()
+                == null) {
+            metadata.put("usageUnavailable", true);
+        }
+
+        if (fallbackToolCallIdGenerated) {
+            metadata.put(
+                    "fallbackToolCallIdGenerated",
+                    true);
+        }
+
+        Generation generation =
+                chatResponse.getResult();
+
+        if (generation != null
+                && generation.getMetadata() != null
+                && generation.getMetadata()
+                .getFinishReason() != null) {
+            metadata.put(
+                    "finishReason",
+                    generation.getMetadata()
+                            .getFinishReason());
+        }
+
+        return Collections.unmodifiableMap(
+                new HashMap<>(metadata));
+    }
+
+    /**
+     * 构建 TokenUsage。
+     * 供应商未返回用量时使用安全的 0 默认值，
+     * 并由 metadata 中的 usageUnavailable 说明其不可用。
+     */
     private TokenUsage buildSafeTokenUsage(Usage usage) {
         if (usage == null) {
             return new TokenUsage(0, 0, 0);
         }
 
-        long inputTokens = safeLong(usage.getPromptTokens());
-        long outputTokens = safeLong(usage.getCompletionTokens());
-        long totalTokens = safeLong(usage.getTotalTokens());
+        long inputTokens =
+                safeLong(usage.getPromptTokens());
 
-        return new TokenUsage(inputTokens, outputTokens, totalTokens);
+        long outputTokens =
+                safeLong(usage.getCompletionTokens());
+
+        long totalTokens =
+                safeLong(usage.getTotalTokens());
+
+        return new TokenUsage(
+                inputTokens,
+                outputTokens,
+                totalTokens);
     }
 
     private long safeLong(Integer value) {
         return value != null ? value : 0;
     }
 
-    /**
-     * 构建 metadata：只保存非敏感信息，使用不可变 Map。
-     */
-    private Map<String, Object> buildMetadata(ChatResponse chatResponse, boolean hasContent) {
-        Map<String, Object> meta = new HashMap<>();
+    private record MappedToolCall(
+            ToolCall toolCall,
+            boolean fallbackIdGenerated
+    ) {
+    }
 
-        if (chatResponse.getMetadata() != null) {
-            // model
-            if (chatResponse.getMetadata().getModel() != null) {
-                meta.put("model", chatResponse.getMetadata().getModel());
-            }
-
-            // responseId
-            if (chatResponse.getMetadata().getId() != null) {
-                meta.put("responseId", chatResponse.getMetadata().getId());
-            }
-
-            // usageUnavailable 标记
-            if (chatResponse.getMetadata().getUsage() == null) {
-                meta.put("usageUnavailable", true);
-            }
-        }
-
-        // finishReason
-        Generation generation = chatResponse.getResult();
-        if (generation != null && generation.getMetadata() != null
-                && generation.getMetadata().getFinishReason() != null) {
-            meta.put("finishReason", generation.getMetadata().getFinishReason());
-        }
-
-        return Collections.unmodifiableMap(meta);
+    private record ToolCallMapping(
+            List<ToolCall> toolCalls,
+            boolean fallbackIdGenerated
+    ) {
     }
 }

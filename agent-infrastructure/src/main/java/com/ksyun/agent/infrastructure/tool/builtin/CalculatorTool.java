@@ -55,10 +55,22 @@ public class CalculatorTool implements AgentTool {
         Map<String, Object> args = invocation.toolCall().arguments();
         String expression = ToolArgs.getString(args, "expression");
 
-        if (expression == null || expression.isBlank()) {
+        if (!args.containsKey("expression")) {
             return ToolResult.failure(
                     AgentErrorCode.INVALID_ARGUMENT.name(),
-                    "Parameter 'expression' is required and must not be blank"
+                    "Parameter 'expression' is required"
+            );
+        }
+        if (expression == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'expression' must be a string"
+            );
+        }
+        if (expression.isBlank()) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'expression' must not be blank"
             );
         }
         if (expression.length() > MAX_EXPRESSION_LENGTH) {

@@ -105,53 +105,85 @@ public class AuthenticatedSupervisorApplicationService {
      * @param requestedThreadId  请求的线程 ID，Optional.empty 表示新线程
      * @return 执行结果
      */
-    public AuthenticatedSupervisorRunResult invoke(UserSession session, String supervisorName, String message,
-                                                    Optional<String> requestedThreadId) {
-        // ---- 基础校验 ----
+    public AuthenticatedSupervisorRunResult invoke(
+            UserSession session,
+            String supervisorName,
+            String message,
+            Optional<String> requestedThreadId
+    ) {
         if (session == null) {
-            throw new AgentFrameworkException(AgentErrorCode.SESSION_INVALID, "session must not be null");
+            throw new AgentFrameworkException(
+                    AgentErrorCode.SESSION_INVALID,
+                    "session must not be null");
         }
         if (supervisorName == null || supervisorName.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "supervisorName must not be blank");
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_ARGUMENT,
+                    "supervisorName must not be blank");
         }
         if (message == null || message.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "message must not be blank");
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_ARGUMENT,
+                    "message must not be blank");
         }
 
-        SupervisorDefinition definition = supervisorRegistry.getRequired(supervisorName);
+        SupervisorDefinition definition =
+                supervisorRegistry.getRequired(supervisorName);
 
-        // ---- 确定 threadId ----
+        Optional<String> safeRequestedThreadId =
+                requestedThreadId == null ? Optional.empty() : requestedThreadId;
+
+        boolean continuation = safeRequestedThreadId
+                .filter(value -> !value.isBlank())
+                .isPresent();
+
         String threadId;
-        Optional<ThreadConversationState> previousState;
-
-        if (requestedThreadId.isEmpty() || requestedThreadId.get() == null || requestedThreadId.get().isBlank()) {
-            // threadId 为空：生成新 threadId
+        if (continuation) {
+            threadId = safeRequestedThreadId.get().trim();
+            threadIdValidator.validate(threadId);
+        } else {
             threadId = threadIdGenerator.generate();
             threadIdValidator.validate(threadId);
-            previousState = Optional.empty();
-            log.info("New Supervisor thread: generated threadId={}, userId={}, supervisor={}",
+            log.info(
+                    "New Supervisor thread: generated threadId={}, userId={}, supervisor={}",
                     threadId, session.userId(), supervisorName);
-        } else {
-            // threadId 存在：校验并加载
-            String trimmedThreadId = requestedThreadId.get().trim();
-            threadIdValidator.validate(trimmedThreadId);
-            threadId = trimmedThreadId;
-
-            // 加载已有状态，userId 来自当前 Session
-            previousState = threadConversationCheckpointService.load(
-                    session.userId(), threadId, CheckpointExecutionType.SUPERVISOR, supervisorName);
-
-            if (previousState.isEmpty()) {
-                // 不自动创建新线程
-                throw new AgentFrameworkException(AgentErrorCode.THREAD_NOT_FOUND,
-                        "Thread not found for the specified supervisor");
-            }
         }
 
-        // ---- 并发 Lease（覆盖加载、执行和保存） ----
-        ThreadExecutionLease lease = threadExecutionCoordinator.acquire(session.userId(), threadId);
+        ThreadExecutionLease lease =
+                threadExecutionCoordinator.acquire(session.userId(), threadId);
+
         try {
-            return executeWithLease(session, supervisorName, message, definition, threadId, previousState, lease);
+            if (threadConversationCheckpointService.hasActiveHitlRun(
+                    session.userId(), threadId)) {
+                throw new AgentFrameworkException(
+                        AgentErrorCode.THREAD_SUSPENDED,
+                        "Thread has an active HITL run, please complete approval first");
+            }
+
+            Optional<ThreadConversationState> previousState = Optional.empty();
+
+            if (continuation) {
+                previousState = threadConversationCheckpointService.load(
+                        session.userId(),
+                        threadId,
+                        CheckpointExecutionType.SUPERVISOR,
+                        supervisorName);
+
+                if (previousState.isEmpty()) {
+                    throw new AgentFrameworkException(
+                            AgentErrorCode.THREAD_NOT_FOUND,
+                            "Thread not found for the specified supervisor");
+                }
+            }
+
+            return executeWithLease(
+                    session,
+                    supervisorName,
+                    message,
+                    definition,
+                    threadId,
+                    previousState,
+                    lease);
         } finally {
             lease.close();
         }

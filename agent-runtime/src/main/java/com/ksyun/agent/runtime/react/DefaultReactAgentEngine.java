@@ -164,9 +164,13 @@ public class DefaultReactAgentEngine implements ReactAgentEngine {
                         context.runId(), context.threadId(), definition.name(),
                         extracted.messages().size());
             } catch (AgentFrameworkException e) {
-                log.warn("Stable state extraction failed: runId={}, threadId={}, errorCode={}",
-                        context.runId(), context.threadId(), e.getErrorCode());
-                conversationState = Optional.empty();
+                log.error(
+                        "Stable state extraction failed: "
+                                + "runId={}, threadId={}, errorCode={}",
+                        context.runId(),
+                        context.threadId(),
+                        e.getErrorCode());
+                throw e;
             }
         } else {
             conversationState = Optional.empty();

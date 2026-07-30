@@ -103,52 +103,83 @@ public class AuthenticatedAgentApplicationService {
      * @param requestedThreadId  请求的线程 ID，Optional.empty 表示新线程
      * @return 执行结果
      */
-    public AuthenticatedAgentRunResult invoke(UserSession session, String agentName, String message,
-                                               Optional<String> requestedThreadId) {
-        // ---- 基础校验 ----
+    public AuthenticatedAgentRunResult invoke(
+            UserSession session,
+            String agentName,
+            String message,
+            Optional<String> requestedThreadId
+    ) {
         if (session == null) {
-            throw new AgentFrameworkException(AgentErrorCode.SESSION_INVALID, "session must not be null");
+            throw new AgentFrameworkException(
+                    AgentErrorCode.SESSION_INVALID,
+                    "session must not be null");
         }
         if (agentName == null || agentName.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "agentName must not be blank");
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_ARGUMENT,
+                    "agentName must not be blank");
         }
         if (message == null || message.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "message must not be blank");
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_ARGUMENT,
+                    "message must not be blank");
         }
 
         AgentDefinition definition = agentRegistry.getRequired(agentName);
 
-        // ---- 确定 threadId ----
-        String threadId;
-        Optional<ThreadConversationState> previousState;
+        Optional<String> safeRequestedThreadId =
+                requestedThreadId == null ? Optional.empty() : requestedThreadId;
 
-        if (requestedThreadId.isEmpty() || requestedThreadId.get() == null || requestedThreadId.get().isBlank()) {
-            // threadId 为空：生成新 threadId
+        boolean continuation = safeRequestedThreadId
+                .filter(value -> !value.isBlank())
+                .isPresent();
+
+        String threadId;
+        if (continuation) {
+            threadId = safeRequestedThreadId.get().trim();
+            threadIdValidator.validate(threadId);
+        } else {
             threadId = threadIdGenerator.generate();
             threadIdValidator.validate(threadId);
-            previousState = Optional.empty();
-            log.info("New thread: generated threadId={}, userId={}, agent={}", threadId, session.userId(), agentName);
-        } else {
-            // threadId 存在：校验并加载
-            String trimmedThreadId = requestedThreadId.get().trim();
-            threadIdValidator.validate(trimmedThreadId);
-            threadId = trimmedThreadId;
-
-            // 加载已有状态，userId 来自当前 Session
-            previousState = threadConversationCheckpointService.load(
-                    session.userId(), threadId, CheckpointExecutionType.REACT_AGENT, agentName);
-
-            if (previousState.isEmpty()) {
-                // 不自动创建新线程
-                throw new AgentFrameworkException(AgentErrorCode.THREAD_NOT_FOUND,
-                        "Thread not found for the specified agent");
-            }
+            log.info("New thread: generated threadId={}, userId={}, agent={}",
+                    threadId, session.userId(), agentName);
         }
 
-        // ---- 并发 Lease（覆盖加载、执行和保存） ----
-        ThreadExecutionLease lease = threadExecutionCoordinator.acquire(session.userId(), threadId);
+        ThreadExecutionLease lease =
+                threadExecutionCoordinator.acquire(session.userId(), threadId);
+
         try {
-            return executeWithLease(session, agentName, message, definition, threadId, previousState, lease);
+            if (threadConversationCheckpointService.hasActiveHitlRun(
+                    session.userId(), threadId)) {
+                throw new AgentFrameworkException(
+                        AgentErrorCode.THREAD_SUSPENDED,
+                        "Thread has an active HITL run, please complete approval first");
+            }
+
+            Optional<ThreadConversationState> previousState = Optional.empty();
+
+            if (continuation) {
+                previousState = threadConversationCheckpointService.load(
+                        session.userId(),
+                        threadId,
+                        CheckpointExecutionType.REACT_AGENT,
+                        agentName);
+
+                if (previousState.isEmpty()) {
+                    throw new AgentFrameworkException(
+                            AgentErrorCode.THREAD_NOT_FOUND,
+                            "Thread not found for the specified agent");
+                }
+            }
+
+            return executeWithLease(
+                    session,
+                    agentName,
+                    message,
+                    definition,
+                    threadId,
+                    previousState,
+                    lease);
         } finally {
             lease.close();
         }

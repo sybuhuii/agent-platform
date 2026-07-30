@@ -5,7 +5,7 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 
 import java.util.Collection;
-import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -55,7 +55,7 @@ public class DefaultAgentRegistry implements AgentRegistry {
 
     @Override
     public Collection<AgentDefinition> list() {
-        return Collections.unmodifiableCollection(agents.values());
+        return List.copyOf(agents.values());
     }
 
     @Override

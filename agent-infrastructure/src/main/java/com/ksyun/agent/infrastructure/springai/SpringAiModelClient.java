@@ -12,7 +12,6 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
-import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,11 +114,12 @@ public class SpringAiModelClient implements ModelClient {
         } catch (AgentFrameworkException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Model invocation failed: {}", e.getMessage());
+            log.error("Model invocation failed", e);
+
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
-                    "Model invocation failed due to an internal error"
-            );
+                    "Model invocation failed due to an internal error",
+                    e);
         }
     }
 
@@ -142,17 +142,22 @@ public class SpringAiModelClient implements ModelClient {
      * - toolCallbacks（如果有）
      * - internalToolExecutionEnabled = false（最重要的架构要求）
      */
-    private ChatOptions buildChatOptions(Map<String, Object> options,
-                                          List<ToolCallback> toolCallbacks) {
-        // 使用 OpenAiChatOptions.Builder 以支持 OpenAI 兼容接口的所有参数
-        OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder();
+    private ChatOptions buildChatOptions(
+            Map<String, Object> options,
+            List<ToolCallback> toolCallbacks
+    ) {
+        ToolCallingChatOptions.Builder optionsBuilder =
+                ToolCallingChatOptions.builder();
 
-        // 明确关闭内部工具自动执行 —— 这是本批最重要的架构要求
+        /*
+         * 必须显式关闭 Spring AI 内部工具执行。
+         */
         optionsBuilder.internalToolExecutionEnabled(false);
 
-        // 添加工具回调（仅 Schema 声明，SafeToolCallback 禁止执行）
-        if (!toolCallbacks.isEmpty()) {
-            optionsBuilder.toolCallbacks(toolCallbacks);
+        if (toolCallbacks != null
+                && !toolCallbacks.isEmpty()) {
+            optionsBuilder.toolCallbacks(
+                    List.copyOf(toolCallbacks));
         }
 
         if (options != null && !options.isEmpty()) {
@@ -171,7 +176,10 @@ public class SpringAiModelClient implements ModelClient {
      * 不得允许客户端通过 options 传入 apiKey、baseUrl、proxy、任意 Java 类名、
      * ToolCallback 或内部工具执行开关。
      */
-    private void applySafeOptions(OpenAiChatOptions.Builder builder, Map<String, Object> options) {
+    private void applySafeOptions(
+            ToolCallingChatOptions.Builder builder,
+            Map<String, Object> options
+    ) {
         for (Map.Entry<String, Object> entry : options.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
@@ -208,66 +216,73 @@ public class SpringAiModelClient implements ModelClient {
     }
 
     private double validateTemperature(Object value) {
-        double temperature;
-        if (value instanceof Number num) {
-            temperature = num.doubleValue();
-        } else if (value instanceof String str) {
-            try {
-                temperature = Double.parseDouble(str);
-            } catch (NumberFormatException e) {
-                throw new AgentFrameworkException(
-                        AgentErrorCode.INVALID_ARGUMENT,
-                        "Option 'temperature' must be a number"
-                );
-            }
-        } else {
+        if (!(value instanceof Number number)) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INVALID_ARGUMENT,
-                    "Option 'temperature' must be a number"
-            );
+                    "Option 'temperature' must be a number");
         }
 
-        if (temperature < TEMPERATURE_MIN || temperature > TEMPERATURE_MAX) {
+        double temperature = number.doubleValue();
+
+        if (!Double.isFinite(temperature)) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INVALID_ARGUMENT,
-                    "Option 'temperature' must be between " + TEMPERATURE_MIN + " and " + TEMPERATURE_MAX
-            );
+                    "Option 'temperature' must be a finite number");
         }
+
+        if (temperature < TEMPERATURE_MIN
+                || temperature > TEMPERATURE_MAX) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_ARGUMENT,
+                    "Option 'temperature' must be between "
+                            + TEMPERATURE_MIN
+                            + " and "
+                            + TEMPERATURE_MAX);
+        }
+
         return temperature;
     }
-
     private int validateMaxTokens(Object value) {
-        int maxTokens;
-        if (value instanceof Number num) {
-            maxTokens = num.intValue();
-        } else if (value instanceof String str) {
-            try {
-                maxTokens = Integer.parseInt(str);
-            } catch (NumberFormatException e) {
-                throw new AgentFrameworkException(
-                        AgentErrorCode.INVALID_ARGUMENT,
-                        "Option 'maxTokens' must be a positive integer"
-                );
-            }
-        } else {
+        if (!(value instanceof Number number)) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INVALID_ARGUMENT,
-                    "Option 'maxTokens' must be a positive integer"
-            );
+                    "Option 'maxTokens' must be a positive integer");
+        }
+
+        final int maxTokens;
+
+        try {
+            /*
+             * intValueExact 会拒绝：
+             * - 1.5 等小数
+             * - 超出 int 范围的数字
+             * - 发生溢出的 Long/BigInteger
+             */
+            maxTokens =
+                    new java.math.BigDecimal(
+                            number.toString())
+                            .intValueExact();
+        } catch (NumberFormatException
+                 | ArithmeticException e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INVALID_ARGUMENT,
+                    "Option 'maxTokens' must be a positive integer",
+                    e);
         }
 
         if (maxTokens <= 0) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INVALID_ARGUMENT,
-                    "Option 'maxTokens' must be a positive integer"
-            );
+                    "Option 'maxTokens' must be a positive integer");
         }
+
         if (maxTokens > MAX_TOKENS_UPPER_LIMIT) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INVALID_ARGUMENT,
-                    "Option 'maxTokens' exceeds the upper limit of " + MAX_TOKENS_UPPER_LIMIT
-            );
+                    "Option 'maxTokens' exceeds the upper limit of "
+                            + MAX_TOKENS_UPPER_LIMIT);
         }
+
         return maxTokens;
     }
 }

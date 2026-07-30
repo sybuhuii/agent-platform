@@ -49,23 +49,37 @@ public class LongTermMemoryContextProvider {
             (MemoryEntry e) -> categoryPriority(e.category())
     );
 
-    /**
-     * 同一 category 内：updatedAt 降序 → namespace 按配置顺序 → key 升序 → memoryId 稳定排序
-     */
-    private static final Comparator<MemoryEntry> WITHIN_CATEGORY = Comparator
-            .comparing(MemoryEntry::updatedAt).reversed()
-            .thenComparing(MemoryEntry::namespace)
-            .thenComparing(MemoryEntry::key)
-            .thenComparing(MemoryEntry::memoryId);
-
-    private static final Comparator<MemoryEntry> FULL_SORT = CATEGORY_PRIORITY
-            .thenComparing(WITHIN_CATEGORY);
-
     private final MemoryStore memoryStore;
     private final MemoryContextRenderer renderer;
     private final TokenCounter tokenCounter;
     private final MemoryContextOptions options;
     private final Clock clock;
+
+    private Comparator<MemoryEntry> memoryComparator() {
+        java.util.Map<String, Integer> namespaceOrder =
+                new java.util.HashMap<>();
+
+        for (int index = 0;
+             index < options.namespaces().size();
+             index++) {
+            namespaceOrder.putIfAbsent(
+                    options.namespaces().get(index),
+                    index);
+        }
+
+        return Comparator
+                .comparingInt((MemoryEntry entry) ->
+                        categoryPriority(entry.category()))
+                .thenComparing(
+                        MemoryEntry::updatedAt,
+                        Comparator.reverseOrder())
+                .thenComparingInt(entry ->
+                        namespaceOrder.getOrDefault(
+                                entry.namespace(),
+                                Integer.MAX_VALUE))
+                .thenComparing(MemoryEntry::key)
+                .thenComparing(MemoryEntry::memoryId);
+    }
 
     public LongTermMemoryContextProvider(MemoryStore memoryStore,
                                           MemoryContextRenderer renderer,
@@ -106,7 +120,8 @@ public class LongTermMemoryContextProvider {
             log.error("MemoryStore failed for userId: {}", userId, e);
             throw new AgentFrameworkException(
                     AgentErrorCode.MEMORY_STORE_FAILED,
-                    "Failed to read memory store for user"
+                    "Failed to read memory store for user",
+                    e
             );
         }
 
@@ -119,7 +134,7 @@ public class LongTermMemoryContextProvider {
 
         // 按固定规则排序
         List<MemoryEntry> sorted = new ArrayList<>(allEntries);
-        sorted.sort(FULL_SORT);
+        sorted.sort(memoryComparator());
 
         // 选择算法：逐条尝试加入，不超过 maxEntries 和 maxInjectedTokens
         List<MemoryEntry> selected = new ArrayList<>();
@@ -132,24 +147,33 @@ public class LongTermMemoryContextProvider {
                 break;
             }
 
-            // 渲染后使用 TokenCounter 计算
-            String rendered = renderer.render(List.of(entry));
-            if (rendered == null) {
+            List<MemoryEntry> candidate =
+                    new ArrayList<>(selected.size() + 1);
+            candidate.addAll(selected);
+            candidate.add(entry);
+
+            String candidateContent = renderer.render(candidate);
+            if (candidateContent == null
+                    || candidateContent.isBlank()) {
                 continue;
             }
-            MemoryContextAgentMessage testMsg = new MemoryContextAgentMessage(
-                    rendered, 1, clock.instant()
-            );
-            int entryTokens = tokenCounter.count(testMsg);
 
-            // 加入后超过 maxInjectedTokens 时跳过该条以及更低优先级条目
-            if (estimatedTokens + entryTokens > options.maxInjectedTokens()) {
+            MemoryContextAgentMessage candidateMessage =
+                    new MemoryContextAgentMessage(
+                            candidateContent,
+                            candidate.size(),
+                            clock.instant());
+
+            int candidateTokens =
+                    tokenCounter.count(candidateMessage);
+
+            if (candidateTokens > options.maxInjectedTokens()) {
                 truncated = true;
-                break;
+                continue;
             }
 
             selected.add(entry);
-            estimatedTokens += entryTokens;
+            estimatedTokens = candidateTokens;
         }
 
         if (selected.isEmpty()) {
@@ -171,6 +195,12 @@ public class LongTermMemoryContextProvider {
                 content, selected.size(), clock.instant()
         );
         int finalTokens = tokenCounter.count(message);
+
+        if (finalTokens > options.maxInjectedTokens()) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.CONTEXT_BUDGET_EXCEEDED,
+                    "Rendered long-term memory exceeds configured injection budget");
+        }
 
         return new LongTermMemoryContext(
                 Optional.of(message),

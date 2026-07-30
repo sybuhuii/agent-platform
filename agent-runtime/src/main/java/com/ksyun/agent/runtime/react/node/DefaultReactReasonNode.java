@@ -114,8 +114,13 @@ public class DefaultReactReasonNode implements ReactReasonNode {
             newSnapshot = update.snapshot();
             newTrace = update.trace();
         } else {
-            // 上下文关闭，手动插入临时记忆消息
-            modelMessages = insertEphemeralWhenContextDisabled(fullHistory, ephemeralContextMessages);
+            if (!ephemeralContextMessages.isEmpty()) {
+                throw new AgentFrameworkException(
+                        AgentErrorCode.INVALID_CONTEXT_CONFIGURATION,
+                        "Long-term memory injection requires enabled "
+                                + "token-budget context management");
+            }
+            modelMessages = fullHistory;
         }
 
         // 构造本轮允许的工具定义
@@ -177,7 +182,9 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
             }
-            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            if (memoryTrace != null) {
+                result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            }
             return result;
         }
 
@@ -194,7 +201,9 @@ public class DefaultReactReasonNode implements ReactReasonNode {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
             }
-            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            if (memoryTrace != null) {
+                result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            }
             return result;
         }
 
@@ -213,7 +222,9 @@ public class DefaultReactReasonNode implements ReactReasonNode {
             result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
             result.put(LATEST_CONTEXT_TRACE, newTrace);
         }
-        result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+        if (memoryTrace != null) {
+            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+        }
         return result;
     }
 
@@ -222,17 +233,22 @@ public class DefaultReactReasonNode implements ReactReasonNode {
      * 记忆为空或 Provider 未注入时返回空上下文。
      * 记忆读取失败时使用明确框架错误，不得加载其他用户数据。
      */
-    private LongTermMemoryContext loadMemoryContext(RunContext runContext) {
+    private LongTermMemoryContext loadMemoryContext(
+            RunContext runContext
+    ) {
         if (memoryContextProvider == null) {
             return LongTermMemoryContext.empty();
         }
+
         try {
             return memoryContextProvider.load(runContext.userId());
+        } catch (AgentFrameworkException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Failed to load memory context for userId={}, falling back to empty",
-                    runContext.userId(), e);
-            // 记忆读取失败时使用明确框架错误，不得加载其他用户数据
-            return LongTermMemoryContext.empty();
+            throw new AgentFrameworkException(
+                    AgentErrorCode.MEMORY_STORE_FAILED,
+                    "Failed to load long-term memory",
+                    e);
         }
     }
 
@@ -249,40 +265,17 @@ public class DefaultReactReasonNode implements ReactReasonNode {
     /**
      * 从 LongTermMemoryContext 构建追踪。
      */
-    private MemoryContextTrace buildMemoryTrace(LongTermMemoryContext memoryContext) {
-        if (memoryContext == LongTermMemoryContext.empty() && memoryContext.message().isEmpty()) {
-            // 空上下文时不需要 trace
+    private MemoryContextTrace buildMemoryTrace(
+            LongTermMemoryContext memoryContext
+    ) {
+        if (memoryContextProvider == null) {
             return null;
         }
-        return MemoryContextTrace.from(memoryContext, java.time.Instant.now());
-    }
 
-    /**
-     * 上下文关闭时手动插入临时记忆消息。
-     * 插入位置：全部 System 消息之后。
-     */
-    private List<AgentMessage> insertEphemeralWhenContextDisabled(
-            List<AgentMessage> fullHistory,
-            List<AgentMessage> ephemeralContextMessages) {
-        if (ephemeralContextMessages.isEmpty()) {
-            return fullHistory;
-        }
-        // 找到 System 消息的结束位置
-        int systemEndIndex = 0;
-        for (int i = 0; i < fullHistory.size(); i++) {
-            if (fullHistory.get(i) instanceof com.ksyun.agent.core.message.SystemAgentMessage) {
-                systemEndIndex = i + 1;
-            } else {
-                break;
-            }
-        }
-        List<AgentMessage> result = new ArrayList<>(fullHistory.size() + ephemeralContextMessages.size());
-        result.addAll(fullHistory.subList(0, systemEndIndex));
-        result.addAll(ephemeralContextMessages);
-        result.addAll(fullHistory.subList(systemEndIndex, fullHistory.size()));
-        return result;
+        return MemoryContextTrace.from(
+                memoryContext,
+                java.time.Instant.now());
     }
-
     /**
      * 将窗口状态合并到结果 Map 中。
      */
@@ -300,9 +293,19 @@ public class DefaultReactReasonNode implements ReactReasonNode {
     /**
      * 将记忆追踪合并到结果 Map 中。
      */
-    private Map<String, Object> mergeMemoryTrace(Map<String, Object> base, MemoryContextTrace memoryTrace) {
-        Map<String, Object> result = new java.util.HashMap<>(base);
-        result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+    private Map<String, Object> mergeMemoryTrace(
+            Map<String, Object> base,
+            MemoryContextTrace memoryTrace
+    ) {
+        Map<String, Object> result =
+                new java.util.HashMap<>(base);
+
+        if (memoryTrace != null) {
+            result.put(
+                    LATEST_MEMORY_CONTEXT_TRACE,
+                    memoryTrace);
+        }
+
         return result;
     }
 

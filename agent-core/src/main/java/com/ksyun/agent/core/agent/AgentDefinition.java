@@ -6,6 +6,7 @@ import java.io.Serializable;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
+import java.util.LinkedHashSet;
 
 /**
  * Agent 定义。
@@ -36,7 +37,9 @@ public record AgentDefinition(
         if (maxIterations <= 0) {
             throw new IllegalArgumentException("maxIterations must be greater than 0");
         }
-        allowedTools = allowedTools == null ? Set.of() : Collections.unmodifiableSet(allowedTools);
+        allowedTools = allowedTools == null
+                ? Set.of()
+                : Collections.unmodifiableSet(new LinkedHashSet<>(allowedTools));
         // contextManagementPolicy 默认值由兼容构造器处理
         Objects.requireNonNull(contextManagementPolicy, "contextManagementPolicy must not be null");
     }

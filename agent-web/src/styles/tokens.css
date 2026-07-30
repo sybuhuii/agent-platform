@@ -1,0 +1,100 @@
+/* ─── 设计 Token（CSS 变量）─── */
+
+:root {
+  /* 基础色 */
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --ring: #3b82f6;
+
+  /* 侧边栏 */
+  --sidebar: #f8fafc;
+  --sidebar-foreground: #1e293b;
+  --sidebar-border: #e2e8f0;
+  --sidebar-active: #eff6ff;
+  --sidebar-active-foreground: #2563eb;
+
+  /* 交互 */
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+
+  /* 语义色 */
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --warning: #f59e0b;
+  --warning-foreground: #1e293b;
+  --success: #22c55e;
+  --success-foreground: #ffffff;
+
+  /* 输入 */
+  --input: #e2e8f0;
+  --input-foreground: #0f172a;
+
+  /* 卡片 */
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --card-border: #e2e8f0;
+
+  /* 弹出层 */
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  /* 圆角 */
+  --radius: 0.5rem;
+  --radius-sm: 0.25rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial,
+    sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", "Consolas",
+    monospace;
+
+  /* 动画 */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+
+  /* 布局 */
+  --sidebar-width: 300px;
+  --header-height: 0px;
+  --chat-max-width: 800px;
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: #334155;
+  --ring: #60a5fa;
+
+  --sidebar: #1e293b;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-border: #334155;
+  --sidebar-active: #1e3a5f;
+  --sidebar-active-foreground: #93c5fd;
+
+  --accent: #2563eb;
+  --accent-foreground: #ffffff;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --warning: #d97706;
+  --warning-foreground: #f1f5f9;
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+
+  --input: #334155;
+  --input-foreground: #f1f5f9;
+
+  --card: #1e293b;
+  --card-foreground: #f1f5f9;
+  --card-border: #334155;
+
+  --popover: #1e293b;
+  --popover-foreground: #f1f5f9;
+}

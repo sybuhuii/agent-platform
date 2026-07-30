@@ -3,6 +3,8 @@ package com.ksyun.agent.runtime.context;
 import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.context.ContextResultMetadataKeys;
 import com.ksyun.agent.core.context.ContextTrimDiagnostic;
+import com.ksyun.agent.core.memory.MemoryResultMetadataKeys;
+import com.ksyun.agent.runtime.memory.MemoryContextTrace;
 
 import java.util.HashMap;
 import java.util.List;
@@ -67,6 +69,45 @@ public final class ContextMetadataHelper {
                     .toList();
             putIfAbsent(merged, ContextResultMetadataKeys.DIAGNOSTICS, diagCodes);
         }
+
+        return Map.copyOf(merged);
+    }
+
+    public static Map<String, Object> mergeMemoryMetadata(
+            Map<String, Object> existingMetadata,
+            MemoryContextTrace trace
+    ) {
+        if (trace == null) {
+            return existingMetadata != null
+                    ? Map.copyOf(existingMetadata)
+                    : Map.of();
+        }
+
+        Map<String, Object> merged = new HashMap<>();
+        if (existingMetadata != null) {
+            merged.putAll(existingMetadata);
+        }
+
+        putIfAbsent(
+                merged,
+                MemoryResultMetadataKeys.AVAILABLE,
+                trace.available());
+        putIfAbsent(
+                merged,
+                MemoryResultMetadataKeys.TOTAL_ENTRY_COUNT,
+                trace.totalEntryCount());
+        putIfAbsent(
+                merged,
+                MemoryResultMetadataKeys.INJECTED_ENTRY_COUNT,
+                trace.injectedEntryCount());
+        putIfAbsent(
+                merged,
+                MemoryResultMetadataKeys.INJECTED_TOKEN_COUNT,
+                trace.injectedTokenCount());
+        putIfAbsent(
+                merged,
+                MemoryResultMetadataKeys.TRUNCATED,
+                trace.truncated());
 
         return Map.copyOf(merged);
     }

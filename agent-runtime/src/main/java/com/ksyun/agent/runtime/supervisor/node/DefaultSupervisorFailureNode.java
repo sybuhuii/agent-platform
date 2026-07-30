@@ -6,6 +6,7 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import com.ksyun.agent.runtime.context.ContextMetadataHelper;
 import com.ksyun.agent.runtime.supervisor.SupervisorStopReason;
+import com.ksyun.agent.runtime.memory.MemoryContextTrace;
 
 import java.util.Map;
 
@@ -37,6 +38,12 @@ public class DefaultSupervisorFailureNode implements SupervisorFailureNode {
         // 合并 Supervisor 上下文处理追踪到 metadata
         ContextProcessingTrace trace = getLatestContextTrace(state);
         Map<String, Object> metadata = ContextMetadataHelper.mergeContextMetadata(Map.of(), trace);
+
+        MemoryContextTrace memoryTrace =
+                getLatestMemoryContextTrace(state);
+        metadata = ContextMetadataHelper.mergeMemoryMetadata(
+                metadata,
+                memoryTrace);
 
         AgentResult result = new AgentResult(
                 definition.name(),

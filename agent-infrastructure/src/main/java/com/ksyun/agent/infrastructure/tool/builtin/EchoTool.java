@@ -48,10 +48,16 @@ public class EchoTool implements AgentTool {
         Map<String, Object> args = invocation.toolCall().arguments();
         String text = ToolArgs.getString(args, "text");
 
-        if (text == null) {
+        if (!args.containsKey("text")) {
             return ToolResult.failure(
                     AgentErrorCode.INVALID_ARGUMENT.name(),
                     "Parameter 'text' is required"
+            );
+        }
+        if (text == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'text' must be a string"
             );
         }
 

@@ -31,7 +31,10 @@ public record ContextWindowSnapshot(
         int processingSequence,
         ContextProcessingTrace latestTrace,
         Instant updatedAt
-) {
+) implements java.io.Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public ContextWindowSnapshot {
         Objects.requireNonNull(windowMessages, "windowMessages must not be null");

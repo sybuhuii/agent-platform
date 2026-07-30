@@ -9,6 +9,7 @@ import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStopReason;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.ksyun.agent.runtime.memory.MemoryContextTrace;
 
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,11 @@ public class DefaultReactMaxIterationsNode implements ReactMaxIterationsNode {
         ContextProcessingTrace trace = getLatestContextTrace(state);
         metadata = ContextMetadataHelper.mergeContextMetadata(metadata, trace);
 
+        MemoryContextTrace memoryTrace =
+                getLatestMemoryContextTrace(state);
+        metadata = ContextMetadataHelper.mergeMemoryMetadata(
+                metadata,
+                memoryTrace);
         AgentResult result = new AgentResult(
                 definition.name(),
                 false,

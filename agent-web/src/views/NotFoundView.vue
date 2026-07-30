@@ -1,7 +1,18 @@
+<script setup lang="ts">
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+</script>
+
 <template>
-  <div class="not-found-page">
-    <h2>404</h2>
-    <p>页面不存在</p>
-    <router-link to="/" class="btn-secondary">返回首页</router-link>
+  <div class="flex flex-col items-center justify-center h-full text-[var(--muted-foreground)] py-20">
+    <p class="text-lg font-medium text-[var(--foreground)] mb-2">页面不存在</p>
+    <p class="text-sm mb-4">您访问的页面不存在或已被移除</p>
+    <button
+      class="rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)] px-4 py-2 text-sm font-medium hover:bg-[var(--accent)]/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+      @click="router.push('/')"
+    >
+      返回首页
+    </button>
   </div>
 </template>

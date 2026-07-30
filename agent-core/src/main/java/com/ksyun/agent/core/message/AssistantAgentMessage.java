@@ -20,6 +20,8 @@ public record AssistantAgentMessage(
     private static final long serialVersionUID = 1L;
 
     public AssistantAgentMessage {
-        toolCalls = toolCalls == null ? List.of() : Collections.unmodifiableList(toolCalls);
+        toolCalls = toolCalls == null
+                ? List.of()
+                : List.copyOf(toolCalls);
     }
 }

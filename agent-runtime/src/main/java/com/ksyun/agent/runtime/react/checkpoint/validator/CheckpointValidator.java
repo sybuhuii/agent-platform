@@ -7,7 +7,9 @@ import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
+import com.ksyun.agent.runtime.checkpoint.thread.ThreadCheckpointStateMapper;
 
+import java.util.Objects;
 import java.util.Map;
 
 /**
@@ -22,6 +24,16 @@ import java.util.Map;
  * 错误信息不得包含完整 stateData 和消息正文。
  */
 public class CheckpointValidator {
+
+    private final ThreadCheckpointStateMapper threadStateMapper;
+
+    public CheckpointValidator(
+            ThreadCheckpointStateMapper threadStateMapper
+    ) {
+        this.threadStateMapper = Objects.requireNonNull(
+                threadStateMapper,
+                "threadStateMapper must not be null");
+    }
 
     /**
      * 校验 Checkpoint。
@@ -128,6 +140,13 @@ public class CheckpointValidator {
         // stateData 必须能够恢复 ThreadConversationState（由 ThreadCheckpointStateMapper 校验）
         // 不得包含待审批对象（pendingApproval == null 已确认）
         // 不得包含完整 UserSession、Session ID（由保存流程保证）
+        if (checkpoint.stateData().size() != 1) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.THREAD_CHECKPOINT_INVALID,
+                    "THREAD_MEMORY stateData contains unsupported transient fields");
+        }
+
+        threadStateMapper.fromCheckpoint(checkpoint);
     }
 
     private void validateNotBlank(String value, String fieldName) {

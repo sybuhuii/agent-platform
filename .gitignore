@@ -72,3 +72,6 @@ pnpm-debug.log*
 
 # 本地开发配置，包含 API Key
 /agent-bootstrap/src/main/resources/application-local.yml
+
+# KSCC 本地开发提示词
+/.kscc-prompts/

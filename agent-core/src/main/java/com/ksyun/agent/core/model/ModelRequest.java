@@ -21,8 +21,17 @@ public record ModelRequest(
 ) {
 
     public ModelRequest {
-        messages = messages == null ? List.of() : Collections.unmodifiableList(messages);
-        tools = tools == null ? List.of() : Collections.unmodifiableList(tools);
-        options = options == null ? Map.of() : Collections.unmodifiableMap(options);
+        messages = messages == null
+                ? List.of()
+                : List.copyOf(messages);
+
+        tools = tools == null
+                ? List.of()
+                : List.copyOf(tools);
+
+        options = options == null
+                ? Map.of()
+                : Collections.unmodifiableMap(
+                new java.util.LinkedHashMap<>(options));
     }
 }

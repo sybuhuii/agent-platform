@@ -5,6 +5,8 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.RunStatus;
+import com.ksyun.agent.core.run.CheckpointPurpose;
+import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService;
@@ -30,7 +32,7 @@ import java.util.Optional;
  * 4. 读取 threadId 并使用 ThreadExecutionCoordinator acquire Lease
  * 5. 在 Lease 内完成审批决定和恢复
  * 6. 恢复完成后保存 THREAD_MEMORY
- * 7. 保存成功后 HITL_RECOVERY 由 ReactResumeEngine LifecycleService 处理
+ * 7. THREAD_MEMORY 保存成功后精确清理目标 HITL_RECOVERY
  * 8. 使用 ReactResumeResult 表达恢复结果（包含 threadId）
  * <p>
  * 约束：
@@ -178,27 +180,93 @@ public class ApprovalResumeApplicationService {
             AgentResult agentResult
     ) {
         if (outcome.conversationState().isPresent()) {
-            // conversationState 存在且稳定：保存新 THREAD_MEMORY
+            /*
+             * 严格顺序：
+             * 1. 保存新的 THREAD_MEMORY
+             * 2. save 正常返回，确认保存成功
+             * 3. 删除本次 runId 对应的 HITL_RECOVERY
+             */
             try {
                 threadConversationCheckpointService.save(
-                        userId, threadId, runId, outcome.conversationState().get());
-                log.info("HITL resume thread memory saved: runId={}, threadId={}, userId={}",
-                        runId, threadId, userId);
-                // 保存成功后，HITL_RECOVERY 的清理由 ReactResumeEngine 的 LifecycleService 在 handleLifecycle 中完成
-                // LifecycleService.complete(resumingCheckpoint) 会将 RESUMING → COMPLETED 然后条件删除
+                        userId,
+                        threadId,
+                        runId,
+                        outcome.conversationState().get());
+
+                cleanupTargetHitlCheckpoint(
+                        userId,
+                        threadId,
+                        runId);
+
+                log.info(
+                        "HITL resume thread synchronized: "
+                                + "runId={}, threadId={}, userId={}",
+                        runId,
+                        threadId,
+                        userId);
             } catch (AgentFrameworkException e) {
-                log.error("HITL resume thread memory save failed: runId={}, threadId={}, errorCode={}",
-                        runId, threadId, e.getErrorCode());
-                // 保存失败时不得视为线程同步成功，不得删除 HITL_RECOVERY
+                log.error(
+                        "HITL resume thread synchronization failed: "
+                                + "runId={}, threadId={}, errorCode={}",
+                        runId,
+                        threadId,
+                        e.getErrorCode());
+
+                /*
+                 * save 失败时不会执行 cleanupTargetHitlCheckpoint，
+                 * 因此不会删除 HITL_RECOVERY。
+                 */
                 throw e;
             }
         } else if (agentResult.status() == RunStatus.SUSPENDED) {
-            // 再次 SUSPENDED：保留新 HITL_RECOVERY，不保存 THREAD_MEMORY，不清理
-            log.info("HITL resume resulted in re-suspension: runId={}, threadId={}", runId, threadId);
+            log.info(
+                    "HITL resume resulted in re-suspension: "
+                            + "runId={}, threadId={}",
+                    runId,
+                    threadId);
         } else {
-            // FAILED 或其他不稳定状态：不覆盖旧 THREAD_MEMORY
-            log.info("HITL resume no stable state: runId={}, threadId={}, status={}",
-                    runId, threadId, agentResult.status());
+            log.info(
+                    "HITL resume produced no stable state: "
+                            + "runId={}, threadId={}, status={}",
+                    runId,
+                    threadId,
+                    agentResult.status());
+        }
+    }
+
+    /**
+     * THREAD_MEMORY 保存成功后，精确清理本次恢复对应的
+     * HITL_RECOVERY。
+     */
+    private void cleanupTargetHitlCheckpoint(
+            String userId,
+            String threadId,
+            String runId
+    ) {
+        AgentCheckpoint target = checkpointStore.findByThreadId(
+                        userId,
+                        threadId,
+                        com.ksyun.agent.core.run.CheckpointPurpose.HITL_RECOVERY)
+                .stream()
+                .filter(checkpoint ->
+                        runId.equals(checkpoint.runId()))
+                .filter(checkpoint ->
+                        checkpoint.status()
+                                == com.ksyun.agent.core.run.CheckpointStatus.RESUMING)
+                .findFirst()
+                .orElseThrow(() -> new AgentFrameworkException(
+                        AgentErrorCode.CHECKPOINT_CONFLICT,
+                        "Target HITL checkpoint is no longer resumable"));
+
+        boolean deleted = checkpointStore.deleteIfVersionMatches(
+                target.runId(),
+                target.checkpointId(),
+                target.version());
+
+        if (!deleted) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.CHECKPOINT_CONFLICT,
+                    "Target HITL checkpoint changed during cleanup");
         }
     }
 

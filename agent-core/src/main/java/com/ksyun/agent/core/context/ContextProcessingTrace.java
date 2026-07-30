@@ -31,7 +31,10 @@ public record ContextProcessingTrace(
         boolean withinBudget,
         Set<ContextTrimDiagnostic> diagnostics,
         Instant processedAt
-) {
+) implements java.io.Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public ContextProcessingTrace {
         Objects.requireNonNull(diagnostics, "diagnostics must not be null");

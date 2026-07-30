@@ -128,8 +128,13 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
             newSnapshot = update.snapshot();
             newTrace = update.trace();
         } else {
-            // 上下文关闭，手动插入临时记忆消息
-            modelMessages = insertEphemeralWhenContextDisabled(messages, ephemeralContextMessages);
+            if (!ephemeralContextMessages.isEmpty()) {
+                throw new AgentFrameworkException(
+                        AgentErrorCode.INVALID_CONTEXT_CONFIGURATION,
+                        "Long-term memory injection requires enabled "
+                                + "token-budget context management");
+            }
+            modelMessages = messages;
         }
 
         // 构造 ModelRequest：tools 必须为空
@@ -201,7 +206,9 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
             result.put(STOP_REASON, SupervisorStopReason.MODEL_ERROR);
             result.put(FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED);
             result.put(FAILURE_MESSAGE, "Supervisor decision parse failed");
-            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            if (memoryTrace != null) {
+                result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            }
             if (newSnapshot != null) {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
@@ -227,7 +234,9 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
             result.put(STOP_REASON, SupervisorStopReason.MODEL_ERROR);
             result.put(FAILURE_ERROR_CODE, e.getErrorCode());
             result.put(FAILURE_MESSAGE, e.getMessage());
-            result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            if (memoryTrace != null) {
+                result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+            }
             if (newSnapshot != null) {
                 result.put(CONTEXT_WINDOW_SNAPSHOT, newSnapshot);
                 result.put(LATEST_CONTEXT_TRACE, newTrace);
@@ -236,16 +245,22 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
         }
     }
 
-    private LongTermMemoryContext loadMemoryContext(RunContext runContext) {
+    private LongTermMemoryContext loadMemoryContext(
+            RunContext runContext
+    ) {
         if (memoryContextProvider == null) {
             return LongTermMemoryContext.empty();
         }
+
         try {
             return memoryContextProvider.load(runContext.userId());
+        } catch (AgentFrameworkException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Failed to load memory context for userId={}, falling back to empty",
-                    runContext.userId(), e);
-            return LongTermMemoryContext.empty();
+            throw new AgentFrameworkException(
+                    AgentErrorCode.MEMORY_STORE_FAILED,
+                    "Failed to load long-term memory",
+                    e);
         }
     }
 
@@ -256,44 +271,38 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
         return List.of();
     }
 
-    private MemoryContextTrace buildMemoryTrace(LongTermMemoryContext memoryContext) {
-        if (memoryContext == LongTermMemoryContext.empty() && memoryContext.message().isEmpty()) {
+    private MemoryContextTrace buildMemoryTrace(
+            LongTermMemoryContext memoryContext
+    ) {
+        if (memoryContextProvider == null) {
             return null;
         }
-        return MemoryContextTrace.from(memoryContext, java.time.Instant.now());
+
+        return MemoryContextTrace.from(
+                memoryContext,
+                java.time.Instant.now());
     }
 
-    private List<AgentMessage> insertEphemeralWhenContextDisabled(
-            List<AgentMessage> messages,
-            List<AgentMessage> ephemeralContextMessages) {
-        if (ephemeralContextMessages.isEmpty()) {
-            return messages;
-        }
-        int systemEndIndex = 0;
-        for (int i = 0; i < messages.size(); i++) {
-            if (messages.get(i) instanceof SystemAgentMessage) {
-                systemEndIndex = i + 1;
-            } else {
-                break;
-            }
-        }
-        List<AgentMessage> result = new ArrayList<>(messages.size() + ephemeralContextMessages.size());
-        result.addAll(messages.subList(0, systemEndIndex));
-        result.addAll(ephemeralContextMessages);
-        result.addAll(messages.subList(systemEndIndex, messages.size()));
-        return result;
-    }
+    private Map<String, Object> mergeContextAndMemoryState(
+            Map<String, Object> base,
+            ContextWindowSnapshot snapshot,
+            ContextProcessingTrace trace,
+            MemoryContextTrace memoryTrace
+    ) {
+        Map<String, Object> result =
+                new java.util.HashMap<>(base);
 
-    private Map<String, Object> mergeContextAndMemoryState(Map<String, Object> base,
-                                                            ContextWindowSnapshot snapshot,
-                                                            ContextProcessingTrace trace,
-                                                            MemoryContextTrace memoryTrace) {
-        Map<String, Object> result = new java.util.HashMap<>(base);
         if (snapshot != null) {
             result.put(CONTEXT_WINDOW_SNAPSHOT, snapshot);
             result.put(LATEST_CONTEXT_TRACE, trace);
         }
-        result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
+
+        if (memoryTrace != null) {
+            result.put(
+                    LATEST_MEMORY_CONTEXT_TRACE,
+                    memoryTrace);
+        }
+
         return result;
     }
 

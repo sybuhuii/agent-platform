@@ -169,41 +169,55 @@ public class ThreadConversationCheckpointService {
                     "state.lastCompletedRunId does not match runId");
         }
 
-        // 生成 checkpointId
+        /*
+         * 无论同一 runId 是否存在 HITL_RECOVERY，都创建一份新的
+         * THREAD_MEMORY Checkpoint。
+         *
+         * HITL_RECOVERY 与 THREAD_MEMORY 使用不同 checkpointId，
+         * 可以在保存与清理之间短暂同时存在。
+         */
         String checkpointId = checkpointIdGenerator.generate();
         Instant now = clock.instant();
 
-        // purpose=THREAD_MEMORY, status=COMPLETED, pendingApproval=null
         AgentCheckpoint checkpoint = new AgentCheckpoint(
                 checkpointId,
                 runId,
                 threadId,
                 userId,
-                null,   // sessionId not stored in THREAD_MEMORY
+                null,
                 state.executionType(),
                 CheckpointPurpose.THREAD_MEMORY,
-                state.participantName(),   // agentName 字段存 participantName
-                "thread_memory",           // nodeName 标识为线程记忆
+                state.participantName(),
+                "thread_memory",
                 stateMapper.toStateData(state),
-                null,   // pendingApproval 必须为空
+                null,
                 CheckpointStatus.COMPLETED,
-                0,      // version 初始值
+                0,
                 now,
                 now
         );
 
-        // 通过 CheckpointValidator 校验
         checkpointValidator.validate(checkpoint);
 
-        // 先保存新 Checkpoint
+        /*
+         * 必须先完成 THREAD_MEMORY 保存。
+         * HITL_RECOVERY 的清理由上层应用服务在确认保存成功后执行。
+         */
         checkpointStore.save(checkpoint);
 
-        log.info("Thread memory saved: checkpointId={}, userId={}, threadId={}, runId={}, executionType={}",
-                checkpointId, userId, threadId, runId, state.executionType());
+        log.info(
+                "Thread memory saved: checkpointId={}, userId={}, "
+                        + "threadId={}, runId={}, executionType={}",
+                checkpointId,
+                userId,
+                threadId,
+                runId,
+                state.executionType());
 
-        // 保存成功后查询同一 userId、threadId、THREAD_MEMORY 的旧 Checkpoint
-        // 只删除比新 Checkpoint 旧的 THREAD_MEMORY 记录
-        cleanupOldThreadMemory(userId, threadId, checkpointId);
+        cleanupOldThreadMemory(
+                userId,
+                threadId,
+                checkpointId);
 
         return checkpoint;
     }

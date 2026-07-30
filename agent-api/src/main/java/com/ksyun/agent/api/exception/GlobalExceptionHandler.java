@@ -55,7 +55,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(httpStatus)
                 .body(Map.of(
                         "errorCode", code.name(),
-                        "message", e.getMessage() != null ? e.getMessage() : code.name()
+                        "message", safeMessage(code, e.getMessage())
                 ));
     }
 
@@ -69,12 +69,56 @@ public class GlobalExceptionHandler {
                 ));
     }
 
+    private String safeMessage(
+            AgentErrorCode errorCode,
+            String originalMessage
+    ) {
+        return switch (errorCode) {
+            case THREAD_NOT_FOUND,
+                 THREAD_PARTICIPANT_MISMATCH ->
+                    "Thread not found";
+
+            case THREAD_CHECKPOINT_INVALID ->
+                    "Thread checkpoint is invalid";
+
+            case MEMORY_STORE_FAILED ->
+                    "Memory operation failed";
+
+            case CONTEXT_BUDGET_EXCEEDED,
+                 TOKEN_COUNT_FAILED,
+                 CONTEXT_PROCESSING_FAILED,
+                 CONTEXT_SUMMARY_FAILED,
+                 INVALID_CONTEXT_SUMMARY_OUTPUT,
+                 INVALID_CONTEXT_WINDOW_STATE ->
+                    "Context processing failed";
+
+            case INTERNAL_ERROR,
+                 RESUME_FAILED,
+                 TOOL_EXECUTION_FAILED ->
+                    "An internal error occurred";
+
+            case MODEL_INVOCATION_FAILED ->
+                    "Model invocation failed";
+
+            default ->
+                    originalMessage != null
+                            ? originalMessage
+                            : errorCode.name();
+        };
+    }
+
     private HttpStatus mapErrorCodeToHttpStatus(AgentErrorCode errorCode) {
         return switch (errorCode) {
             // 400 Bad Request
-            case INVALID_ARGUMENT, TOOL_NOT_FOUND, ROLE_NOT_FOUND,
-                 INVALID_APPROVAL_DECISION, CHECKPOINT_NOT_RESUMABLE,
-                 APPROVAL_REQUIRED, INVALID_THREAD_ID -> HttpStatus.BAD_REQUEST;
+            case INVALID_ARGUMENT,
+                 INVALID_MEMORY_ENTRY,
+                 INVALID_CONTEXT_CONFIGURATION,
+                 TOOL_NOT_FOUND,
+                 ROLE_NOT_FOUND,
+                 INVALID_APPROVAL_DECISION,
+                 CHECKPOINT_NOT_RESUMABLE,
+                 APPROVAL_REQUIRED,
+                 INVALID_THREAD_ID -> HttpStatus.BAD_REQUEST;
 
             // 401 Unauthorized
             case AUTHENTICATION_FAILED, INVALID_CREDENTIALS,
@@ -99,9 +143,14 @@ public class GlobalExceptionHandler {
             // 503 Service Unavailable
             case MODEL_NOT_AVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
 
-            // 500 Internal Server Error
-            case MAX_ITERATIONS_REACHED, TOOL_EXECUTION_FAILED,
-                 RESUME_FAILED, THREAD_CHECKPOINT_INVALID, INTERNAL_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
+            case MAX_ITERATIONS_REACHED,
+                 TOOL_EXECUTION_FAILED,
+                 RESUME_FAILED,
+                 THREAD_CHECKPOINT_INVALID,
+                 MEMORY_STORE_FAILED,
+                 CONTEXT_BUDGET_EXCEEDED,
+                 TOKEN_COUNT_FAILED,
+                 INTERNAL_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
 
             // 默认 500
             default -> HttpStatus.INTERNAL_SERVER_ERROR;

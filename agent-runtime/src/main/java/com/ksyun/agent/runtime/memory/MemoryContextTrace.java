@@ -17,7 +17,10 @@ public record MemoryContextTrace(
         int injectedTokenCount,
         boolean truncated,
         Instant loadedAt
-) {
+) implements java.io.Serializable {
+
+    @java.io.Serial
+    private static final long serialVersionUID = 1L;
 
     public MemoryContextTrace {
         Objects.requireNonNull(loadedAt, "loadedAt must not be null");

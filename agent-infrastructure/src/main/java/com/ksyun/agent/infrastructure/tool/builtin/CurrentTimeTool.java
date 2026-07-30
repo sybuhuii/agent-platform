@@ -50,6 +50,13 @@ public class CurrentTimeTool implements AgentTool {
         Map<String, Object> args = invocation.toolCall().arguments();
         String timezoneStr = ToolArgs.getString(args, "timezone", "UTC");
 
+        if (timezoneStr == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'timezone' must be a string"
+            );
+        }
+
         if (timezoneStr.isBlank()) {
             timezoneStr = "UTC";
         }

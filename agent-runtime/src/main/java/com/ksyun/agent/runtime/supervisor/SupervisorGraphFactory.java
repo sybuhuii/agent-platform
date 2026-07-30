@@ -104,7 +104,8 @@ public class SupervisorGraphFactory {
 
                 // Phase7 Batch4 上下文窗口 Channel（覆盖语义）
                 entry(CONTEXT_WINDOW_SNAPSHOT, Channels.base((oldVal, newVal) -> newVal)),
-                entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal))
+                entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal)),
+                entry(LATEST_MEMORY_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal))
         );
     }
 

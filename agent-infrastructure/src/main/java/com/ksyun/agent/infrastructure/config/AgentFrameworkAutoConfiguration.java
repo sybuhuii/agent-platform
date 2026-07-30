@@ -129,7 +129,9 @@ public class AgentFrameworkAutoConfiguration {
                                                          ObjectProvider<com.ksyun.agent.runtime.context.ContextWindowManager> contextWindowManagerProvider,
                                                          ObjectProvider<com.ksyun.agent.application.context.ContextDemoApplicationService> demoServiceProvider,
                                                          MemoryProperties memoryProperties,
-                                                         ObjectProvider<MemoryStore> memoryStoreProvider) {
+                                                         ObjectProvider<MemoryStore> memoryStoreProvider,
+                                                         ObjectProvider<LongTermMemoryContextProvider> memoryContextProvider,
+                                                         ObjectProvider<RememberUserMemoryTool> rememberToolProvider) {
         ContextProperties.Summary summaryProps = contextProperties.getSummary();
         ContextSummaryOptions summaryOptions = new ContextSummaryOptions(
                 summaryProps.isEnabled(),
@@ -171,16 +173,28 @@ public class AgentFrameworkAutoConfiguration {
         // 长期记忆配置
         boolean memoryEnabled = memoryProperties.isEnabled();
         boolean memoryStoreAvailable = memoryStoreProvider.getIfAvailable() != null;
+        boolean memoryCrudAvailable =
+                memoryEnabled && memoryStoreAvailable;
+
+        boolean memoryContextAvailable =
+                memoryCrudAvailable
+                        && memoryProperties.getContext().isEnabled()
+                        && memoryContextProvider.getIfAvailable() != null;
+
+        boolean rememberToolAvailable =
+                memoryCrudAvailable
+                        && memoryProperties.getTools().isRememberEnabled()
+                        && rememberToolProvider.getIfAvailable() != null;
         FrameworkQueryService.MemoryConfig memoryConfig = new FrameworkQueryService.MemoryConfig(
                 memoryEnabled,
                 memoryStoreAvailable,
                 memoryProperties.getBackend(),
                 memoryProperties.getDefaultNamespace(),
                 "userId",
-                true,   // supportsPut
-                true,   // supportsGet
-                true,   // supportsList
-                true,   // supportsDelete
+                memoryCrudAvailable, // supportsPut
+                memoryCrudAvailable, // supportsGet
+                memoryCrudAvailable, // supportsList
+                memoryCrudAvailable, // supportsDelete
                 "CheckpointStore",
                 "MemoryStore",
                 true,   // storesSeparated
@@ -199,14 +213,14 @@ public class AgentFrameworkAutoConfiguration {
                 true,   // hitlResumeThreadSyncSupported
                 "SAVE_THREAD_MEMORY_THEN_DELETE_HITL",  // hitlThreadSyncOrder
                 // Phase8 Batch5 长期记忆上下文
-                memoryEnabled && memoryProperties.getContext().isEnabled(), // longTermContextInjectionEnabled
-                true,   // longTermContextAutoRead
-                true,   // longTermContextEphemeral
-                false,  // memoryContextStoredInThreadCheckpoint
-                memoryEnabled && memoryProperties.getTools().isRememberEnabled(), // rememberToolEnabled
-                true,   // rememberToolUsesAuthenticatedUser
+                memoryContextAvailable, // longTermContextInjectionEnabled
+                memoryContextAvailable, // longTermContextAutoRead
+                memoryContextAvailable, // longTermContextEphemeral
+                false,                  // memoryContextStoredInThreadCheckpoint
+                rememberToolAvailable,  // rememberToolEnabled
+                rememberToolAvailable,  // rememberToolUsesAuthenticatedUser
                 "remember_user_memory", // rememberToolName
-                true,   // crossThreadMemorySupported
+                memoryCrudAvailable,    // crossThreadMemorySupported
                 "userId", // crossUserIsolation
                 memoryProperties.getContext().getNamespaces(), // memoryContextNamespaces
                 memoryProperties.getContext().getMaxEntries(), // memoryContextMaxEntries
@@ -583,15 +597,49 @@ public class AgentFrameworkAutoConfiguration {
 
     @Bean
     @ConditionalOnProperty(
-            name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
-    public MemoryContextOptions memoryContextOptions(MemoryProperties memoryProperties) {
-        MemoryProperties.Context ctx = memoryProperties.getContext();
+            name = "agent.memory.enabled",
+            havingValue = "true",
+            matchIfMissing = true)
+    public MemoryContextOptions memoryContextOptions(
+            MemoryProperties memoryProperties,
+            ContextProperties contextProperties
+    ) {
+        MemoryProperties.Context memoryContext =
+                memoryProperties.getContext();
+
+        if (memoryContext.isEnabled()) {
+            if (!contextProperties.isEnabled()
+                    || !contextProperties.isTokenTrimmingEnabled()) {
+                throw new IllegalArgumentException(
+                        "Long-term memory context requires "
+                                + "agent.context.enabled=true and "
+                                + "agent.context.token-trimming-enabled=true");
+            }
+
+            int availableMessageBudget =
+                    contextProperties.getMaxContextTokens()
+                            - contextProperties.getReservedOutputTokens()
+                            - contextProperties.getReservedProtocolTokens()
+                            - contextProperties.getSafetyMarginTokens();
+
+            if (availableMessageBudget <= 0) {
+                throw new IllegalArgumentException(
+                        "Effective context message budget must be > 0");
+            }
+
+            if (memoryContext.getMaxInjectedTokens()
+                    >= availableMessageBudget) {
+                throw new IllegalArgumentException(
+                        "agent.memory.context.max-injected-tokens must be "
+                                + "smaller than the effective context message budget");
+            }
+        }
+
         return new MemoryContextOptions(
-                ctx.isEnabled(),
-                ctx.getNamespaces(),
-                ctx.getMaxEntries(),
-                ctx.getMaxInjectedTokens()
-        );
+                memoryContext.isEnabled(),
+                memoryContext.getNamespaces(),
+                memoryContext.getMaxEntries(),
+                memoryContext.getMaxInjectedTokens());
     }
 
     @Bean

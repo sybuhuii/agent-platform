@@ -19,6 +19,9 @@ public record ModelResponse(
 ) {
 
     public ModelResponse {
-        metadata = metadata == null ? Map.of() : Collections.unmodifiableMap(metadata);
+        metadata = metadata == null
+                ? Map.of()
+                : Collections.unmodifiableMap(
+                new java.util.LinkedHashMap<>(metadata));
     }
 }

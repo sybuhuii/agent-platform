@@ -6,6 +6,7 @@ import com.ksyun.agent.core.tool.ToolDefinition;
 import com.ksyun.agent.core.tool.ToolInvocation;
 import com.ksyun.agent.core.tool.ToolResult;
 import com.ksyun.agent.core.tool.ToolRiskLevel;
+import java.util.Locale;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -66,31 +67,74 @@ public class TextSearchTool implements AgentTool {
         Map<String, Object> args = invocation.toolCall().arguments();
 
         String text = ToolArgs.getString(args, "text");
-        if (text == null) {
+        if (!args.containsKey("text")) {
             return ToolResult.failure(
                     AgentErrorCode.INVALID_ARGUMENT.name(),
                     "Parameter 'text' is required"
             );
         }
+        if (text == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'text' must be a string"
+            );
+        }
         if (text.length() > MAX_TEXT_LENGTH) {
             return ToolResult.failure(
                     AgentErrorCode.INVALID_ARGUMENT.name(),
-                    "Parameter 'text' exceeds maximum length of " + MAX_TEXT_LENGTH + " characters"
+                    "Parameter 'text' exceeds maximum length of "
+                            + MAX_TEXT_LENGTH + " characters"
             );
         }
 
         String keyword = ToolArgs.getString(args, "keyword");
-        if (keyword == null || keyword.isEmpty()) {
+        if (!args.containsKey("keyword")) {
             return ToolResult.failure(
                     AgentErrorCode.INVALID_ARGUMENT.name(),
-                    "Parameter 'keyword' is required and must not be empty"
+                    "Parameter 'keyword' is required"
+            );
+        }
+        if (keyword == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'keyword' must be a string"
+            );
+        }
+        if (keyword.isEmpty()) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'keyword' must not be empty"
             );
         }
 
-        boolean caseSensitive = ToolArgs.getBoolean(args, "caseSensitive", false);
+        Boolean caseSensitiveValue =
+                ToolArgs.getBoolean(args, "caseSensitive");
 
-        Integer maxMatchesVal = ToolArgs.getInteger(args, "maxMatches");
-        int maxMatches = maxMatchesVal != null ? maxMatchesVal : DEFAULT_MAX_MATCHES;
+        if (args.containsKey("caseSensitive")
+                && caseSensitiveValue == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'caseSensitive' must be a boolean"
+            );
+        }
+
+        boolean caseSensitive = Boolean.TRUE.equals(caseSensitiveValue);
+
+        Integer maxMatchesValue =
+                ToolArgs.getInteger(args, "maxMatches");
+
+        if (args.containsKey("maxMatches")
+                && maxMatchesValue == null) {
+            return ToolResult.failure(
+                    AgentErrorCode.INVALID_ARGUMENT.name(),
+                    "Parameter 'maxMatches' must be a 32-bit integer"
+            );
+        }
+
+        int maxMatches = maxMatchesValue != null
+                ? maxMatchesValue
+                : DEFAULT_MAX_MATCHES;
+
         if (maxMatches < 1 || maxMatches > 100) {
             return ToolResult.failure(
                     AgentErrorCode.INVALID_ARGUMENT.name(),
@@ -98,12 +142,9 @@ public class TextSearchTool implements AgentTool {
             );
         }
 
-        String searchTarget = text;
-        String searchKeyword = keyword;
-        if (!caseSensitive) {
-            searchTarget = text.toLowerCase();
-            searchKeyword = keyword.toLowerCase();
-        }
+        String normalizedKeyword = caseSensitive
+                ? keyword
+                : keyword.toLowerCase(Locale.ROOT);
 
         String[] lines = text.split("\\R", -1);
         StringBuilder result = new StringBuilder();
@@ -112,44 +153,52 @@ public class TextSearchTool implements AgentTool {
 
         for (int i = 0; i < lines.length; i++) {
             String originalLine = lines[i];
-            String compareLine = caseSensitive ? originalLine : originalLine.toLowerCase();
+            String comparableLine = caseSensitive
+                    ? originalLine
+                    : originalLine.toLowerCase(Locale.ROOT);
 
-            if (compareLine.contains(searchKeyword)) {
-                matchCount++;
-                if (matchCount > maxMatches) {
-                    truncated = true;
-                    break;
-                }
-
-                String displayLine = originalLine;
-                if (displayLine.length() > MAX_LINE_DISPLAY_LENGTH) {
-                    displayLine = displayLine.substring(0, MAX_LINE_DISPLAY_LENGTH) + "...[truncated]";
-                }
-
-                if (!result.isEmpty()) {
-                    result.append('\n');
-                }
-                result.append(i + 1).append(':').append(displayLine);
-
-                if (result.length() > MAX_RESULT_CONTENT_LENGTH) {
-                    truncated = true;
-                    break;
-                }
+            if (!comparableLine.contains(normalizedKeyword)) {
+                continue;
             }
+
+            if (matchCount >= maxMatches) {
+                truncated = true;
+                break;
+            }
+
+            String displayLine = originalLine;
+            if (displayLine.length() > MAX_LINE_DISPLAY_LENGTH) {
+                displayLine = displayLine.substring(
+                        0,
+                        MAX_LINE_DISPLAY_LENGTH
+                ) + "...[truncated]";
+                truncated = true;
+            }
+
+            String entry = (i + 1) + ":" + displayLine;
+            int separatorLength = result.isEmpty() ? 0 : 1;
+            int projectedLength =
+                    result.length() + separatorLength + entry.length();
+
+            if (projectedLength > MAX_RESULT_CONTENT_LENGTH) {
+                truncated = true;
+                break;
+            }
+
+            if (!result.isEmpty()) {
+                result.append('\n');
+            }
+            result.append(entry);
+            matchCount++;
         }
 
-        String content;
-        if (matchCount == 0) {
-            content = "No matches found for keyword";
-        } else {
-            content = result.toString();
-        }
+        String content = matchCount == 0
+                ? "No matches found for keyword"
+                : result.toString();
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("matchCount", matchCount);
-        if (truncated) {
-            metadata.put("truncated", true);
-        }
+        metadata.put("truncated", truncated);
 
         return ToolResult.success(content, Map.copyOf(metadata));
     }

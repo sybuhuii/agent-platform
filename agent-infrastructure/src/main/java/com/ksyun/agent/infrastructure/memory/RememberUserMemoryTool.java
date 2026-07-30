@@ -9,6 +9,8 @@ import com.ksyun.agent.core.tool.ToolDefinition;
 import com.ksyun.agent.core.tool.ToolInvocation;
 import com.ksyun.agent.core.tool.ToolResult;
 import com.ksyun.agent.core.tool.ToolRiskLevel;
+import com.ksyun.agent.core.exception.AgentErrorCode;
+import com.ksyun.agent.core.exception.AgentFrameworkException;
 
 import java.util.Map;
 import java.util.Objects;
@@ -64,22 +66,24 @@ public class RememberUserMemoryTool implements AgentTool {
                   "description": "记忆类别：PROFILE=个人背景，PREFERENCE=偏好，FACT=事实，RULE=规则"
                 },
                 "key": {
-                  "type": "string",
-                  "maxLength": 128,
-                  "description": "记忆键名，使用稳定语义，例如 programming_language"
-                },
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "description": "记忆键名，使用稳定语义，例如 programming_language"
+                          },
                 "value": {
-                  "type": "string",
-                  "maxLength": 4096,
-                  "description": "记忆值，用户明确表达的内容"
-                }
+                           "type": "string",
+                           "minLength": 1,
+                           "maxLength": 4096,
+                           "description": "记忆值，用户明确表达的内容"
+                         }
               },
               "required": ["category", "key", "value"],
               "additionalProperties": false
             }
             """,
             "tool:remember_user_memory:invoke",
-            ToolRiskLevel.LOW
+            ToolRiskLevel.SAFE
     );
 
     private static final Map<MemoryCategory, String> CATEGORY_NAMESPACE_MAP = Map.of(
@@ -190,15 +194,14 @@ public class RememberUserMemoryTool implements AgentTool {
                             "success", true
                     )
             );
-        } catch (Exception e) {
-            // 不得吞掉 MemoryStore 异常
-            String errorCode = e instanceof com.ksyun.agent.core.exception.AgentFrameworkException afe
-                    ? afe.getErrorCode().name()
-                    : "MEMORY_STORE_FAILED";
+        } catch (AgentFrameworkException e) {
             return ToolResult.failure(
-                    errorCode,
-                    "Failed to save memory: " + e.getMessage()
-            );
+                    e.getErrorCode().name(),
+                    "Memory could not be saved");
+        } catch (Exception e) {
+            return ToolResult.failure(
+                    AgentErrorCode.MEMORY_STORE_FAILED.name(),
+                    "Memory could not be saved due to an internal error");
         }
     }
 }
