@@ -106,6 +106,12 @@ export interface SupervisorInvokeResponse {
   errorCode?: string
   evidence: string[]
   metadata: Record<string, unknown>
+  /** SUSPENDED 时为子 Agent 的 runId，前端审批时使用此 runId */
+  approvalRunId?: string
+  /** SUSPENDED 时为父 Supervisor 的 runId（等于 runId） */
+  parentRunId?: string
+  /** 是否为嵌套 Supervisor 暂停 */
+  isNested: boolean
 }
 
 // ─── HITL 审批 ───
@@ -160,6 +166,12 @@ export interface ApprovalResumeResponse {
   operationName: string
   riskLevel: string
   safeMetadata: Record<string, unknown>
+  /** 子 Agent 的 runId，前端审批时使用此 runId */
+  approvalRunId?: string
+  /** 父 Supervisor 的 runId（嵌套恢复时非空） */
+  parentRunId?: string
+  /** 是否为嵌套 Supervisor 恢复 */
+  isNested: boolean
 }
 
 // ─── 用户管理 ───
@@ -260,6 +272,8 @@ export interface ApprovalChatMessage {
   id: string
   approvalId: string
   runId: string
+  /** 子 Agent 的 runId，前端审批时使用此 runId（而非 runId） */
+  approvalRunId?: string
   operationName: string
   riskLevel: string
   reason: string

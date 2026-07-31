@@ -6,6 +6,7 @@ import com.ksyun.agent.api.security.AuthenticatedSessionAttributes;
 import com.ksyun.agent.application.supervisor.AuthenticatedSupervisorApplicationService;
 import com.ksyun.agent.application.supervisor.AuthenticatedSupervisorRunResult;
 import com.ksyun.agent.core.exception.AgentErrorCode;
+import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.security.UserSession;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.ResponseEntity;
@@ -63,6 +64,16 @@ public class AuthenticatedSupervisorController {
         return ResponseEntity.ok(toResponse(runResult));
     }
     private SupervisorInvokeResponse toResponse(AuthenticatedSupervisorRunResult runResult) {
+        Map<String, Object> metadata = runResult.result().metadata();
+        com.ksyun.agent.core.run.RunStatus resultStatus = runResult.result().status();
+        boolean isSuspended = resultStatus == com.ksyun.agent.core.run.RunStatus.SUSPENDED;
+
+        // SUSPENDED 时从 metadata 中提取子 Agent runId
+        String approvalRunId = isSuspended && metadata != null
+                ? safeGetString(metadata, "childRunId") : null;
+        String parentRunId = isSuspended ? runResult.runId() : null;
+        boolean isNested = isSuspended;
+
         return new SupervisorInvokeResponse(
                 runResult.runId(),
                 runResult.threadId(),
@@ -71,7 +82,16 @@ public class AuthenticatedSupervisorController {
                 runResult.result().content(),
                 runResult.result().errorCode(),
                 runResult.result().evidence(),
-                runResult.result().metadata()
+                metadata,
+                approvalRunId,
+                parentRunId,
+                isNested
         );
+    }
+
+    private static String safeGetString(Map<String, Object> map, String key) {
+        if (map == null) return null;
+        Object value = map.get(key);
+        return value != null ? String.valueOf(value) : null;
     }
 }

@@ -32,6 +32,10 @@ public class SampleSupervisorProvider implements SupervisorProvider {
      * <p>
      * maxIterations=5：典型两轮调度需4次Reason（DISPATCH+Aggregate各一轮），
      * 5次上限留有余量且防止无限循环。
+     * <p>
+     * memberAgents 包含 approval_demo_agent，用于演示 HITL 审批闭环：
+     * approval_demo_agent 使用 delete_demo_record（HIGH risk）触发人工审批，
+     * Supervisor 暂停后前端可审批恢复。
      */
     private static SupervisorDefinition createGeneralSupervisor() {
         return new SupervisorDefinition(
@@ -40,6 +44,7 @@ public class SampleSupervisorProvider implements SupervisorProvider {
                 "你是一个多Agent调度者（Supervisor），负责分析总任务、选择专业子Agent并汇总结果。\n"
                         + "计算类任务优先选择calculator_agent。\n"
                         + "时间、文本搜索、回显或综合工具任务可选择utility_agent。\n"
+                        + "删除记录类任务选择approval_demo_agent，该Agent的删除操作需要人工审批。\n"
                         + "复杂任务允许分派多个子任务，但当前按顺序执行。\n"
                         + "不得自行执行专业工具。\n"
                         + "不得伪造子Agent执行结果。\n"
@@ -50,7 +55,7 @@ public class SampleSupervisorProvider implements SupervisorProvider {
                         + "不得输出详细思维链，只输出简洁decisionSummary。\n"
                         + "不得选择memberAgents之外的Agent。\n"
                         + "不得把子Agent当作工具调用。",
-                Set.of("utility_agent", "calculator_agent"),
+                Set.of("utility_agent", "calculator_agent", "approval_demo_agent"),
                 5
         );
     }

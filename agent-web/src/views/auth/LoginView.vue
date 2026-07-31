@@ -1,18 +1,14 @@
 /**
- * 登录页 — 简洁产品化页面。
- * - 居中登录卡片
- * - 产品名称和简短描述
- * - 用户名、密码输入
- * - 登录中状态
- * - 清晰但不泄漏内部信息的错误提示
- * - Enter 提交
- * - 密码不得写入持久化存储
- * - 不展示默认示例密码
+ * 登录页 — ChatGPT 风格。
+ * - 居中布局，简洁大方
+ * - 绿色主色按钮
+ * - 产品名称突出
  */
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { ApiError } from '@/api/errors'
 
 const router = useRouter()
 const route = useRoute()
@@ -53,57 +49,67 @@ async function handleLogin() {
 
 <template>
   <div class="flex min-h-dvh items-center justify-center bg-[var(--background)] px-4">
-    <div class="w-full max-w-sm">
-      <div class="text-center mb-8">
-        <h1 class="text-2xl font-bold text-[var(--foreground)]">Agent Platform</h1>
-        <p class="mt-2 text-sm text-[var(--muted-foreground)]">AI Agent 管理与协作平台</p>
+    <div class="w-full max-w-[400px]">
+      <!-- Logo + 标题 -->
+      <div class="flex flex-col items-center mb-8">
+        <div class="w-12 h-12 rounded-full bg-[var(--accent)] flex items-center justify-center mb-4">
+          <Bot class="w-6 h-6 text-[var(--accent-foreground)]" aria-hidden="true" />
+        </div>
+        <h1 class="text-2xl font-semibold text-[var(--foreground)]">欢迎回来</h1>
+        <p class="mt-2 text-sm text-[var(--muted-foreground)]">登录智能协作平台</p>
       </div>
 
+      <!-- 登录表单 -->
       <form
-        class="rounded-xl border border-[var(--card-border)] bg-[var(--card)] p-6 shadow-sm"
+        class="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-sm"
         @submit.prevent="handleLogin"
       >
         <div class="space-y-4">
           <div>
-            <label for="username" class="block text-sm font-medium text-[var(--muted-foreground)] mb-1">用户名</label>
+            <label for="username" class="block text-sm font-medium text-[var(--foreground)] mb-1.5">用户名</label>
             <input
               id="username"
               v-model="username"
               type="text"
               autocomplete="username"
               :disabled="loading"
-              class="w-full rounded-lg border border-[var(--input)] bg-transparent px-3 py-2 text-sm placeholder:text-[var(--muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:opacity-50"
+              class="w-full rounded-xl border border-[var(--input)] bg-transparent px-4 py-2.5 text-sm placeholder:text-[var(--muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:border-transparent disabled:opacity-50 transition-shadow"
               placeholder="请输入用户名"
             />
           </div>
 
           <div>
-            <label for="password" class="block text-sm font-medium text-[var(--muted-foreground)] mb-1">密码</label>
+            <label for="password" class="block text-sm font-medium text-[var(--foreground)] mb-1.5">密码</label>
             <input
               id="password"
               v-model="password"
               type="password"
               autocomplete="current-password"
               :disabled="loading"
-              class="w-full rounded-lg border border-[var(--input)] bg-transparent px-3 py-2 text-sm placeholder:text-[var(--muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:opacity-50"
+              class="w-full rounded-xl border border-[var(--input)] bg-transparent px-4 py-2.5 text-sm placeholder:text-[var(--muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:border-transparent disabled:opacity-50 transition-shadow"
               placeholder="请输入密码"
               @keydown.enter="handleLogin"
             />
           </div>
 
-          <div v-if="error" role="alert" class="rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 p-3 text-sm text-[var(--destructive)]">
+          <div v-if="error" role="alert" class="rounded-xl border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 p-3 text-sm text-[var(--destructive)]">
             {{ error }}
           </div>
 
           <button
             type="submit"
             :disabled="loading || !username || !password"
-            class="w-full rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)] px-4 py-2.5 text-sm font-medium hover:bg-[var(--accent)]/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-full rounded-xl bg-[var(--accent)] text-[var(--accent-foreground)] px-4 py-3 text-sm font-medium hover:bg-[var(--accent-hover)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {{ loading ? '登录中...' : '登录' }}
           </button>
         </div>
       </form>
+
+      <!-- 底部信息 -->
+      <p class="mt-6 text-center text-xs text-[var(--muted-foreground)]">
+        智能协作 — AI Agent 管理与协作平台
+      </p>
     </div>
   </div>
 </template>

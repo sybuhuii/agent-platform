@@ -7,6 +7,7 @@ import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.store.CheckpointStore;
@@ -71,6 +72,15 @@ public class ApprovalDecisionService {
             throw new AgentFrameworkException(
                     AgentErrorCode.CHECKPOINT_NOT_FOUND,
                     "Checkpoint not found");
+        }
+
+        // 2.5 拒绝直接对 SUPERVISOR Checkpoint 执行审批决定
+        // 父 Supervisor Checkpoint 中的 pendingApproval 是代表性子审批，
+        // 真正可审批对象只有 executionType == REACT_AGENT 的子 Checkpoint
+        if (checkpoint.executionType() == CheckpointExecutionType.SUPERVISOR) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "Supervisor checkpoint cannot be directly approved");
         }
 
         // 3. 校验 Checkpoint 状态

@@ -288,11 +288,14 @@ export const useChatStore = defineStore('chat', () => {
       const meta = response.metadata
       if (meta && typeof meta === 'object' && 'approvalId' in meta) {
         runState.value = { status: 'suspended', runId: response.runId }
+        // 嵌套 Supervisor 暂停时，前端审批使用子 Agent 的 runId
+        const approvalRunId = response.approvalRunId ?? response.runId
         addMessage(targetConversationId, {
           role: 'approval',
           id: uniqueId(),
           approvalId: String(meta.approvalId),
           runId: response.runId,
+          approvalRunId,
           operationName: String(meta.operationName ?? ''),
           riskLevel: String(meta.riskLevel ?? ''),
           reason: String(meta.reason ?? ''),

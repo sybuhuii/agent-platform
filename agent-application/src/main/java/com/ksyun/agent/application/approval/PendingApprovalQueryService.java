@@ -6,6 +6,7 @@ import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.store.CheckpointStore;
@@ -70,6 +71,11 @@ public class PendingApprovalQueryService {
                 continue;
             }
 
+            // 只返回 REACT_AGENT 可审批记录，父 Supervisor Checkpoint 不得出现在审批列表
+            if (cp.executionType() != CheckpointExecutionType.REACT_AGENT) {
+                continue;
+            }
+
             summaries.add(toSummary(cp));
         }
 
@@ -116,6 +122,12 @@ public class PendingApprovalQueryService {
 
         // 只返回 PENDING 状态的审批
         if (checkpoint.pendingApproval().status() != ApprovalStatus.PENDING) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_FOUND,
+                    "Checkpoint not found");
+        }
+
+        // 只返回 REACT_AGENT 可审批记录，父 Supervisor Checkpoint 不可直接审批
+        if (checkpoint.executionType() != CheckpointExecutionType.REACT_AGENT) {
             throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_FOUND,
                     "Checkpoint not found");
         }

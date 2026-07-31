@@ -6,6 +6,7 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.run.RunContext;
+import com.ksyun.agent.core.supervisor.SupervisorChildExecution;
 import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import org.bsc.langgraph4j.state.AgentState;
 
@@ -44,6 +45,12 @@ public final class SupervisorStateKeys {
 
     // ---- Phase8 Batch5 长期记忆上下文 ----
     public static final String LATEST_MEMORY_CONTEXT_TRACE = "latestMemoryContextTrace";
+
+    // ---- Phase9 Batch2 Supervisor 暂停状态 ----
+    public static final String RUN_STATUS = "runStatus";
+    public static final String DISPATCH_TASKS = "dispatchTasks";
+    public static final String SUSPENDED_CHILDREN = "suspendedChildren";
+    public static final String CHECKPOINT_ID = "checkpointId";
 
     // ---- 类型安全读取方法 ----
 
@@ -124,6 +131,38 @@ public final class SupervisorStateKeys {
      */
     public static com.ksyun.agent.runtime.memory.MemoryContextTrace getLatestMemoryContextTrace(AgentState state) {
         return state.<com.ksyun.agent.runtime.memory.MemoryContextTrace>value(LATEST_MEMORY_CONTEXT_TRACE).orElse(null);
+    }
+
+    // ---- Phase9 Batch2 Supervisor 暂停状态访问器 ----
+
+    /**
+     * 获取 Supervisor 运行状态。初始为空。
+     */
+    public static com.ksyun.agent.core.run.RunStatus getRunStatus(AgentState state) {
+        return state.<com.ksyun.agent.core.run.RunStatus>value(RUN_STATUS).orElse(null);
+    }
+
+    /**
+     * 获取当前分派批次的完整子任务执行状态表。初始为空列表。
+     */
+    @SuppressWarnings("unchecked")
+    public static List<SupervisorChildExecution> getDispatchTasks(AgentState state) {
+        return state.<List<SupervisorChildExecution>>value(DISPATCH_TASKS).orElse(List.of());
+    }
+
+    /**
+     * 获取当前批次中暂停的子任务执行记录列表。初始为空列表。
+     */
+    @SuppressWarnings("unchecked")
+    public static List<SupervisorChildExecution> getSuspendedChildren(AgentState state) {
+        return state.<List<SupervisorChildExecution>>value(SUSPENDED_CHILDREN).orElse(List.of());
+    }
+
+    /**
+     * 获取当前 Checkpoint ID。初始为空。
+     */
+    public static String getCheckpointId(AgentState state) {
+        return state.<String>value(CHECKPOINT_ID).orElse(null);
     }
 
     private static <T> T getRequired(AgentState state, String key, Class<T> type) {

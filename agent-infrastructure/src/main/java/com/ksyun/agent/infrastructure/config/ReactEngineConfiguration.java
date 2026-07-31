@@ -267,11 +267,16 @@ public class ReactEngineConfiguration {
     public ApprovalResumeApplicationService approvalResumeApplicationService(
             ApprovalDecisionService decisionService,
             ReactResumeEngine resumeEngine,
+            ObjectProvider<com.ksyun.agent.runtime.supervisor.SupervisorResumeEngine> supervisorResumeEngineProvider,
             CheckpointStore checkpointStore,
             ThreadExecutionCoordinator threadExecutionCoordinator,
-            ThreadConversationCheckpointService threadConversationCheckpointService) {
+            ThreadConversationCheckpointService threadConversationCheckpointService,
+            com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver linkResolver) {
+        com.ksyun.agent.runtime.supervisor.SupervisorResumeEngine supervisorResumeEngine =
+                supervisorResumeEngineProvider.getIfAvailable();
         return new ApprovalResumeApplicationService(decisionService, resumeEngine,
-                checkpointStore, threadExecutionCoordinator, threadConversationCheckpointService);
+                supervisorResumeEngine, checkpointStore, threadExecutionCoordinator,
+                threadConversationCheckpointService, linkResolver);
     }
 
     // ---- Dev Application Service ----

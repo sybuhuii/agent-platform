@@ -16,4 +16,5 @@ public final class SupervisorNodeNames {
     public static final String COMPLETE = "complete";
     public static final String MAX_ITERATIONS_FALLBACK = "max_iterations_fallback";
     public static final String FAILURE = "failure";
+    public static final String SUSPEND = "suspend";
 }

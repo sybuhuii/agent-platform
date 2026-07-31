@@ -4,11 +4,13 @@ import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.store.CheckpointStore;
+import com.ksyun.agent.core.supervisor.SupervisorChildRunLink;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationState;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadExecutionCoordinator;
@@ -16,6 +18,8 @@ import com.ksyun.agent.runtime.checkpoint.thread.ThreadExecutionLease;
 import com.ksyun.agent.runtime.react.ReactResumeEngine;
 import com.ksyun.agent.runtime.react.ReactResumeResult;
 import com.ksyun.agent.runtime.react.ThreadExecutionOutcome;
+import com.ksyun.agent.runtime.supervisor.SupervisorResumeEngine;
+import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,25 +33,19 @@ import java.util.Optional;
  * 1. 接收 ApprovalDecisionCommand
  * 2. 根据已认证 UserSession 查找待审批 Checkpoint
  * 3. 验证 Checkpoint 属于当前 userId
- * 4. 读取 threadId 并使用 ThreadExecutionCoordinator acquire Lease
- * 5. 在 Lease 内完成审批决定和恢复
- * 6. 恢复完成后保存 THREAD_MEMORY
- * 7. THREAD_MEMORY 保存成功后精确清理目标 HITL_RECOVERY
- * 8. 使用 ReactResumeResult 表达恢复结果（包含 threadId）
+ * 4. 区分独立 React Agent 恢复和嵌套 Supervisor 恢复
+ * 5. 独立 React：直接恢复子 Agent
+ * 6. 嵌套 Supervisor：恢复子 Agent 后继续恢复父 Supervisor
+ * 7. 恢复完成后保存 THREAD_MEMORY
+ * 8. 精确清理目标 HITL_RECOVERY
+ * 9. 返回 ApprovalResumeResult（统一覆盖两种场景）
  * <p>
  * 约束：
  * - 不在 Application Service 中伪造最终回答
  * - 操作者身份来自已验证 UserSession
  * - 不从请求 Body 获取 userId
- * - Lease Key 必须为 Checkpoint.userId + threadId
- * - 不得信任请求体中的 userId 或 threadId
- * - 审批请求仍以 runId 和 approvalId 定位
  * - 不改变 approve/reject 幂等语义
  * - 不改变版本冲突 409 语义
- * - 保存新 THREAD_MEMORY 成功后才视为线程同步成功
- * - 不得先删除 HITL_RECOVERY 再保存 THREAD_MEMORY
- * - 不得返回恢复成功但线程状态未保存的假成功
- * - 此过程不是分布式事务，仅保证进程内顺序
  * - 不得把 THREAD_MEMORY 加入待审批列表
  */
 public class ApprovalResumeApplicationService {
@@ -56,217 +54,74 @@ public class ApprovalResumeApplicationService {
 
     private final ApprovalDecisionService decisionService;
     private final ReactResumeEngine resumeEngine;
+    private final SupervisorResumeEngine supervisorResumeEngine;
     private final CheckpointStore checkpointStore;
     private final ThreadExecutionCoordinator threadExecutionCoordinator;
     private final ThreadConversationCheckpointService threadConversationCheckpointService;
+    private final SupervisorChildRunLinkResolver linkResolver;
 
     public ApprovalResumeApplicationService(ApprovalDecisionService decisionService,
                                               ReactResumeEngine resumeEngine,
+                                              SupervisorResumeEngine supervisorResumeEngine,
                                               CheckpointStore checkpointStore,
                                               ThreadExecutionCoordinator threadExecutionCoordinator,
-                                              ThreadConversationCheckpointService threadConversationCheckpointService) {
+                                              ThreadConversationCheckpointService threadConversationCheckpointService,
+                                              SupervisorChildRunLinkResolver linkResolver) {
         this.decisionService = Objects.requireNonNull(decisionService);
         this.resumeEngine = Objects.requireNonNull(resumeEngine);
+        this.supervisorResumeEngine = supervisorResumeEngine;
         this.checkpointStore = Objects.requireNonNull(checkpointStore);
         this.threadExecutionCoordinator = Objects.requireNonNull(threadExecutionCoordinator);
         this.threadConversationCheckpointService = Objects.requireNonNull(threadConversationCheckpointService);
+        this.linkResolver = Objects.requireNonNull(linkResolver);
     }
 
     /**
      * 处理审批决定并恢复执行。
      * <p>
-     * 流程：
-     * 1. 根据 runId 查找待审批 Checkpoint（只读）
-     * 2. 验证 Checkpoint 属于当前 userId
-     * 3. 读取 threadId
-     * 4. 使用 ThreadExecutionCoordinator.acquire(userId, threadId)
-     * 5. 在 Lease 内：审批决定 + 恢复执行 + 线程状态同步
-     * 6. 释放 Lease
+     * 自动区分：
+     * - 独立 React Agent 恢复（子 Checkpoint 无 Link）
+     * - 嵌套 Supervisor 恢复（子 Checkpoint 包含 Link）
      * <p>
-     * APPROVE：记录决定后恢复图执行
-     * REJECT：记录决定后也恢复图执行
-     * <p>
-     * 返回 ReactResumeResult，包含 runId/threadId/agentName/status 等完整信息。
-     * 不得对 REJECT 直接返回静态 failure AgentResult。
+     * 返回 ApprovalResumeResult，统一覆盖两种场景。
      */
-    public ReactResumeResult decideAndResume(UserSession operator, ApprovalDecisionCommand command) {
+    public ApprovalResumeResult decideAndResume(UserSession operator, ApprovalDecisionCommand command) {
         Objects.requireNonNull(operator, "operator must not be null");
         Objects.requireNonNull(command, "command must not be null");
 
-        // 1. 根据 runId 查找待审批 Checkpoint（只读，获取 userId 和 threadId）
+        // 1. 根据 runId 查找待审批 Checkpoint（只读）
         AgentCheckpoint checkpoint = checkpointStore.load(command.runId())
                 .orElseThrow(() -> new AgentFrameworkException(
                         AgentErrorCode.CHECKPOINT_NOT_FOUND,
                         "Checkpoint not found for runId: " + command.runId()));
 
-        // 2. 验证 Checkpoint 属于当前 userId（安全拒绝，不泄漏信息）
+        // 2. 验证 Checkpoint 属于当前 userId
         if (!checkpoint.userId().equals(operator.userId())) {
             throw new AgentFrameworkException(
                     AgentErrorCode.CHECKPOINT_NOT_FOUND,
                     "Checkpoint not found for runId: " + command.runId());
         }
 
+        // 2.5 拒绝直接对 SUPERVISOR Checkpoint 执行审批恢复
+        if (checkpoint.executionType() == CheckpointExecutionType.SUPERVISOR) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "Supervisor checkpoint cannot be directly approved or resumed");
+        }
+
         // 3. 读取 threadId
         String threadId = checkpoint.threadId();
         String userId = operator.userId();
 
-        // 4. 使用 ThreadExecutionCoordinator.acquire(userId, threadId)
-        ThreadExecutionLease lease = threadExecutionCoordinator.acquire(userId, threadId);
-        try {
-            // 5. 在 Lease 内完成审批决定和恢复
-            return executeDecideAndResumeInLease(operator, command, userId, threadId, lease);
-        } finally {
-            // 6. 释放 Lease（异常路径也必须释放）
-            lease.close();
-        }
-    }
+        // 4. 检测是否嵌套 Supervisor 恢复
+        SupervisorChildRunLink link = tryResolveLink(checkpoint);
 
-    /**
-     * 在 Lease 保护下完成审批决定、恢复和线程同步。
-     */
-    private ReactResumeResult executeDecideAndResumeInLease(
-            UserSession operator,
-            ApprovalDecisionCommand command,
-            String userId,
-            String threadId,
-            ThreadExecutionLease lease
-    ) {
-        // 5a. 审批决定（在 Lease 内）
-        ApprovalDecisionResult decisionResult = decisionService.decide(operator, command);
-
-        // 5b. 恢复执行（APPROVE 和 REJECT 都恢复图执行）
-        ThreadExecutionOutcome outcome = resumeEngine.resumeThread(command.runId(), operator);
-
-        AgentResult agentResult = outcome.result();
-
-        // 5c. 线程状态同步
-        handleThreadSync(command.runId(), userId, threadId, outcome, agentResult);
-
-        // 构造恢复结果
-        ReactResumeResult resumeResult = ReactResumeResult.from(
-                command.runId(), threadId, agentResult);
-
-        log.info("Resume completed: runId={}, action={}, resultStatus={}",
-                command.runId(), command.action(), agentResult.status());
-
-        return resumeResult;
-    }
-
-    /**
-     * 处理 HITL 恢复后的线程状态同步。
-     * <p>
-     * 保存和清理顺序（进程内）：
-     * 获取 ThreadExecutionLease
-     * → 审批决定及 Checkpoint 版本抢占
-     * → 恢复 ReAct
-     * → 得到稳定 ThreadConversationState
-     * → 保存新 THREAD_MEMORY
-     * → 确认保存成功
-     * → 清理目标 HITL_RECOVERY（由 ReactResumeEngine LifecycleService 处理）
-     * → 释放 Lease
-     * <p>
-     * - conversationState 存在且稳定：保存新 THREAD_MEMORY
-     * - conversationState 为空且再次 SUSPENDED：保留新 HITL_RECOVERY，不保存 THREAD_MEMORY
-     * - conversationState 为空且 FAILED：不覆盖旧 THREAD_MEMORY
-     * <p>
-     * THREAD_MEMORY 保存失败时，不得视为线程同步成功。
-     * 此过程不是分布式事务。
-     */
-    private void handleThreadSync(
-            String runId,
-            String userId,
-            String threadId,
-            ThreadExecutionOutcome outcome,
-            AgentResult agentResult
-    ) {
-        if (outcome.conversationState().isPresent()) {
-            /*
-             * 严格顺序：
-             * 1. 保存新的 THREAD_MEMORY
-             * 2. save 正常返回，确认保存成功
-             * 3. 删除本次 runId 对应的 HITL_RECOVERY
-             */
-            try {
-                threadConversationCheckpointService.save(
-                        userId,
-                        threadId,
-                        runId,
-                        outcome.conversationState().get());
-
-                cleanupTargetHitlCheckpoint(
-                        userId,
-                        threadId,
-                        runId);
-
-                log.info(
-                        "HITL resume thread synchronized: "
-                                + "runId={}, threadId={}, userId={}",
-                        runId,
-                        threadId,
-                        userId);
-            } catch (AgentFrameworkException e) {
-                log.error(
-                        "HITL resume thread synchronization failed: "
-                                + "runId={}, threadId={}, errorCode={}",
-                        runId,
-                        threadId,
-                        e.getErrorCode());
-
-                /*
-                 * save 失败时不会执行 cleanupTargetHitlCheckpoint，
-                 * 因此不会删除 HITL_RECOVERY。
-                 */
-                throw e;
-            }
-        } else if (agentResult.status() == RunStatus.SUSPENDED) {
-            log.info(
-                    "HITL resume resulted in re-suspension: "
-                            + "runId={}, threadId={}",
-                    runId,
-                    threadId);
+        if (link != null) {
+            // 嵌套 Supervisor 恢复路径
+            return decideAndResumeNested(operator, command, userId, threadId, link);
         } else {
-            log.info(
-                    "HITL resume produced no stable state: "
-                            + "runId={}, threadId={}, status={}",
-                    runId,
-                    threadId,
-                    agentResult.status());
-        }
-    }
-
-    /**
-     * THREAD_MEMORY 保存成功后，精确清理本次恢复对应的
-     * HITL_RECOVERY。
-     */
-    private void cleanupTargetHitlCheckpoint(
-            String userId,
-            String threadId,
-            String runId
-    ) {
-        AgentCheckpoint target = checkpointStore.findByThreadId(
-                        userId,
-                        threadId,
-                        com.ksyun.agent.core.run.CheckpointPurpose.HITL_RECOVERY)
-                .stream()
-                .filter(checkpoint ->
-                        runId.equals(checkpoint.runId()))
-                .filter(checkpoint ->
-                        checkpoint.status()
-                                == com.ksyun.agent.core.run.CheckpointStatus.RESUMING)
-                .findFirst()
-                .orElseThrow(() -> new AgentFrameworkException(
-                        AgentErrorCode.CHECKPOINT_CONFLICT,
-                        "Target HITL checkpoint is no longer resumable"));
-
-        boolean deleted = checkpointStore.deleteIfVersionMatches(
-                target.runId(),
-                target.checkpointId(),
-                target.version());
-
-        if (!deleted) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_CONFLICT,
-                    "Target HITL checkpoint changed during cleanup");
+            // 独立 React Agent 恢复路径
+            return decideAndResumeStandalone(operator, command, userId, threadId);
         }
     }
 
@@ -277,46 +132,190 @@ public class ApprovalResumeApplicationService {
         return decisionService.decide(operator, command);
     }
 
+    // ---- 内部方法 ----
+
     /**
-     * 仅恢复已决定的 Checkpoint。
+     * 尝试从子 Checkpoint 中解析 SupervisorChildRunLink。
      * <p>
-     * 也使用 Lease 保护并发。
+     * 解析失败时返回 null（独立 React Agent 场景）。
+     * 不抛异常，因为独立 React Agent Checkpoint 不包含 Link。
      */
-    public ReactResumeResult resume(UserSession operator, String runId) {
-        Objects.requireNonNull(operator, "operator must not be null");
-        Objects.requireNonNull(runId, "runId must not be null");
-
-        // 1. 查找 Checkpoint（只读）
-        AgentCheckpoint checkpoint = checkpointStore.load(runId)
-                .orElseThrow(() -> new AgentFrameworkException(
-                        AgentErrorCode.CHECKPOINT_NOT_FOUND,
-                        "Checkpoint not found for runId: " + runId));
-
-        // 2. 验证 userId
-        if (!checkpoint.userId().equals(operator.userId())) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_NOT_FOUND,
-                    "Checkpoint not found for runId: " + runId);
+    private SupervisorChildRunLink tryResolveLink(AgentCheckpoint childCheckpoint) {
+        try {
+            return linkResolver.resolve(childCheckpoint);
+        } catch (AgentFrameworkException e) {
+            // 解析失败表示独立 React Agent，不是嵌套场景
+            log.debug("No SupervisorChildRunLink found in checkpoint: runId={}, treating as standalone React",
+                    childCheckpoint.runId());
+            return null;
         }
+    }
 
-        // 3. 读取 threadId
-        String threadId = checkpoint.threadId();
-        String userId = operator.userId();
+    /**
+     * 独立 React Agent 恢复路径。
+     * <p>
+     * 与原有逻辑一致，但返回 ApprovalResumeResult。
+     * 使用子 Agent 的 threadId 作为 Lease Key。
+     */
+    private ApprovalResumeResult decideAndResumeStandalone(
+            UserSession operator,
+            ApprovalDecisionCommand command,
+            String userId,
+            String threadId) {
 
-        // 4. 获取 Lease
         ThreadExecutionLease lease = threadExecutionCoordinator.acquire(userId, threadId);
         try {
-            // 5. 在 Lease 内恢复执行
-            ThreadExecutionOutcome outcome = resumeEngine.resumeThread(runId, operator);
+            ApprovalDecisionResult decisionResult = decisionService.decide(operator, command);
 
+            ThreadExecutionOutcome outcome = resumeEngine.resumeThread(command.runId(), operator);
             AgentResult agentResult = outcome.result();
 
-            // 6. 线程状态同步
-            handleThreadSync(runId, userId, threadId, outcome, agentResult);
+            handleThreadSync(command.runId(), userId, threadId, outcome, agentResult);
 
-            return ReactResumeResult.from(runId, threadId, agentResult);
+            ReactResumeResult reactResult = ReactResumeResult.from(command.runId(), threadId, agentResult);
+            return ApprovalResumeResult.fromReactResult(reactResult);
         } finally {
             lease.close();
+        }
+    }
+
+    /**
+     * 嵌套 Supervisor 恢复路径。
+     * <p>
+     * 流程：
+     * 1. 使用父 Supervisor threadId 作为 Lease Key
+     * 2. 记录审批决定
+     * 3. 恢复子 Agent（ReactResumeEngine）
+     * 4. 子 Agent 恢复后继续恢复父 Supervisor（SupervisorResumeEngine）
+     * 5. 线程状态同步
+     * 6. 精确清理父子 HITL Checkpoint
+     * 7. 返回 ApprovalResumeResult
+     * <p>
+     * 子 Agent 恢复在父 SupervisorResumeEngine 内部完成，
+     * 不需要单独调用 ReactResumeEngine。
+     * 但审批决定需要先对子 Checkpoint 执行。
+     */
+    private ApprovalResumeResult decideAndResumeNested(
+            UserSession operator,
+            ApprovalDecisionCommand command,
+            String userId,
+            String childThreadId,
+            SupervisorChildRunLink link) {
+
+        // 使用父 Supervisor threadId 作为 Lease Key
+        String parentThreadId = link.parentThreadId();
+        ThreadExecutionLease lease = threadExecutionCoordinator.acquire(userId, parentThreadId);
+        try {
+            // 1. 记录子 Checkpoint 的审批决定
+            ApprovalDecisionResult decisionResult = decisionService.decide(operator, command);
+
+            // 2. 恢复父 Supervisor（内部会恢复子 Agent）
+            ThreadExecutionOutcome supervisorOutcome =
+                    supervisorResumeEngine.resumeSupervisor(link.parentRunId(), operator);
+
+            AgentResult supervisorResult = supervisorOutcome.result();
+
+            // 3. 线程状态同步（使用父 Supervisor threadId）
+            handleThreadSync(link.parentRunId(), userId, parentThreadId, supervisorOutcome, supervisorResult);
+
+            // 4. 精确清理子 Agent HITL Checkpoint
+            cleanupChildHitlCheckpoint(command.runId(), userId, childThreadId);
+
+            // 5. 返回 Supervisor 恢复结果
+            return ApprovalResumeResult.fromSupervisorResult(
+                    supervisorResult, link.parentRunId(), parentThreadId);
+        } finally {
+            lease.close();
+        }
+    }
+
+    /**
+     * 处理 HITL 恢复后的线程状态同步。
+     * <p>
+     * - conversationState 存在且稳定：保存新 THREAD_MEMORY
+     * - conversationState 为空且再次 SUSPENDED：保留新 HITL_RECOVERY，不保存 THREAD_MEMORY
+     * - conversationState 为空且 FAILED：不覆盖旧 THREAD_MEMORY
+     */
+    private void handleThreadSync(
+            String runId,
+            String userId,
+            String threadId,
+            ThreadExecutionOutcome outcome,
+            AgentResult agentResult) {
+
+        if (outcome.conversationState().isPresent()) {
+            try {
+                threadConversationCheckpointService.save(
+                        userId, threadId, runId, outcome.conversationState().get());
+
+                cleanupTargetHitlCheckpoint(userId, threadId, runId);
+
+                log.info("HITL resume thread synchronized: runId={}, threadId={}, userId={}",
+                        runId, threadId, userId);
+            } catch (AgentFrameworkException e) {
+                log.error("HITL resume thread synchronization failed: runId={}, threadId={}, errorCode={}",
+                        runId, threadId, e.getErrorCode());
+                throw e;
+            }
+        } else if (agentResult.status() == RunStatus.SUSPENDED) {
+            log.info("HITL resume resulted in re-suspension: runId={}, threadId={}", runId, threadId);
+        } else {
+            log.info("HITL resume produced no stable state: runId={}, threadId={}, status={}",
+                    runId, threadId, agentResult.status());
+        }
+    }
+
+    /**
+     * 精确清理子 Agent HITL Checkpoint。
+     * <p>
+     * 嵌套恢复场景下，子 Checkpoint 已被 SupervisorResumeEngine 内部的
+     * ReactResumeEngine 处理过，但 THREAD_MEMORY 保存和 HITL 清理
+     * 可能需要在此补充。
+     */
+    private void cleanupChildHitlCheckpoint(String childRunId, String userId, String childThreadId) {
+        try {
+            AgentCheckpoint childCp = checkpointStore.load(childRunId).orElse(null);
+            if (childCp == null) {
+                return;
+            }
+
+            // 只清理 RESUMING 状态的子 Checkpoint
+            if (childCp.status() != CheckpointStatus.RESUMING) {
+                return;
+            }
+
+            // 条件删除
+            boolean deleted = checkpointStore.deleteIfVersionMatches(
+                    childCp.runId(), childCp.checkpointId(), childCp.version());
+            if (deleted) {
+                log.info("Child HITL checkpoint cleaned up after nested resume: childRunId={}", childRunId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to cleanup child HITL checkpoint: childRunId={}", childRunId, e);
+        }
+    }
+
+    /**
+     * THREAD_MEMORY 保存成功后，精确清理本次恢复对应的 HITL_RECOVERY。
+     */
+    private void cleanupTargetHitlCheckpoint(String userId, String threadId, String runId) {
+        AgentCheckpoint target = checkpointStore.findByThreadId(
+                        userId, threadId, CheckpointPurpose.HITL_RECOVERY)
+                .stream()
+                .filter(checkpoint -> runId.equals(checkpoint.runId()))
+                .filter(checkpoint -> checkpoint.status() == CheckpointStatus.RESUMING)
+                .findFirst()
+                .orElseThrow(() -> new AgentFrameworkException(
+                        AgentErrorCode.CHECKPOINT_CONFLICT,
+                        "Target HITL checkpoint is no longer resumable"));
+
+        boolean deleted = checkpointStore.deleteIfVersionMatches(
+                target.runId(), target.checkpointId(), target.version());
+
+        if (!deleted) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.CHECKPOINT_CONFLICT,
+                    "Target HITL checkpoint changed during cleanup");
         }
     }
 }

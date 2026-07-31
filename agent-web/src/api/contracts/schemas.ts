@@ -46,7 +46,10 @@ export const supervisorInvokeResponseSchema = z.object({
   content: z.string(),
   errorCode: z.string().nullable().optional(),
   evidence: z.array(z.string()),
-  metadata: z.record(z.string(), z.unknown())
+  metadata: z.record(z.string(), z.unknown()),
+  approvalRunId: z.string().nullable().optional(),
+  parentRunId: z.string().nullable().optional(),
+  isNested: z.boolean().default(false)
 })
 
 // 审批决定
@@ -69,7 +72,10 @@ export const approvalResumeResponseSchema = z.object({
   approvalId: z.string(),
   operationName: z.string(),
   riskLevel: z.string(),
-  safeMetadata: z.record(z.string(), z.unknown())
+  safeMetadata: z.record(z.string(), z.unknown()),
+  approvalRunId: z.string().nullable().optional(),
+  parentRunId: z.string().nullable().optional(),
+  isNested: z.boolean().default(false)
 })
 
 // 待审批列表项

@@ -13,7 +13,7 @@ import { test, expect } from '@playwright/test'
 test.describe('登录页', () => {
   test('登录页渲染', async ({ page }) => {
     await page.goto('/login')
-    await expect(page.getByText('Agent Platform')).toBeVisible()
+    await expect(page.getByText('欢迎回来')).toBeVisible()
     await expect(page.getByLabel('用户名')).toBeVisible()
     await expect(page.getByLabel('密码')).toBeVisible()
   })

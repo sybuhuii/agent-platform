@@ -23,6 +23,14 @@ import java.util.Map;
  * - metadata 只包含安全白名单字段
  * - 保持原 runId 和 threadId（不传空字符串）
  * - 再次挂起返回新的 approvalId
+ * <p>
+ * Phase9 Batch5 新增字段：
+ * - approvalRunId: 子 Agent 的 runId（前端审批时使用此 runId）
+ * - parentRunId: 父 Supervisor 的 runId（嵌套恢复时非空）
+ * - isNested: 是否为嵌套 Supervisor 恢复
+ * <p>
+ * 前端审批时使用 approvalRunId（子 runId）作为审批路径参数，
+ * 不使用 runId（父 runId），因为审批对象是子 Checkpoint。
  */
 public record ApprovalResumeResponse(
         String runId,
@@ -36,6 +44,9 @@ public record ApprovalResumeResponse(
         String approvalId,
         String operationName,
         String riskLevel,
-        Map<String, Object> safeMetadata
+        Map<String, Object> safeMetadata,
+        String approvalRunId,
+        String parentRunId,
+        boolean isNested
 ) {
 }

@@ -107,6 +107,11 @@ public class SupervisorThreadConversationStateMapper {
         // Phase7 Batch4 上下文窗口
         initialState.put(CONTEXT_WINDOW_SNAPSHOT, null);
         initialState.put(LATEST_CONTEXT_TRACE, null);
+        // Phase9 Batch2 Supervisor 暂停状态
+        initialState.put(RUN_STATUS, com.ksyun.agent.core.run.RunStatus.RUNNING);
+        initialState.put(DISPATCH_TASKS, List.of());
+        initialState.put(SUSPENDED_CHILDREN, List.of());
+        initialState.put(CHECKPOINT_ID, null);
 
         log.debug("Created initial Supervisor state: runId={}, threadId={}, supervisor={}, messageCount={}",
                 runContext.runId(), runContext.threadId(), definition.name(), initialMessages.size());
@@ -200,6 +205,13 @@ public class SupervisorThreadConversationStateMapper {
         // 恢复 previousState.latestContextTrace
         continuedState.put(LATEST_CONTEXT_TRACE,
                 previousState.latestContextTrace().orElse(null));
+
+        // Phase9 Batch2 Supervisor 暂停状态：新轮次全部重置
+        // 普通 THREAD_MEMORY 续接不得恢复上一轮的暂停任务、审批、分派表和 Checkpoint ID
+        continuedState.put(RUN_STATUS, com.ksyun.agent.core.run.RunStatus.RUNNING);
+        continuedState.put(DISPATCH_TASKS, List.of());
+        continuedState.put(SUSPENDED_CHILDREN, List.of());
+        continuedState.put(CHECKPOINT_ID, null);
 
         log.debug("Created continued Supervisor state: runId={}, threadId={}, supervisor={}, " +
                         "previousMessageCount={}, totalMessageCount={}",

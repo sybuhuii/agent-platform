@@ -7,12 +7,12 @@ import com.ksyun.agent.api.dto.PendingApprovalSummaryResponse;
 import com.ksyun.agent.api.security.AuthenticatedSessionAttributes;
 import com.ksyun.agent.application.approval.ApprovalDecisionCommand;
 import com.ksyun.agent.application.approval.ApprovalResumeApplicationService;
+import com.ksyun.agent.application.approval.ApprovalResumeResult;
 import com.ksyun.agent.application.approval.PendingApprovalDetail;
 import com.ksyun.agent.application.approval.PendingApprovalSummary;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.application.approval.PendingApprovalQueryService;
-import com.ksyun.agent.runtime.react.ReactResumeResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -120,10 +120,10 @@ public class HitlApprovalController {
                 request.trimmedComment()
         );
 
-        ReactResumeResult resumeResult = resumeService.decideAndResume(session, command);
+        ApprovalResumeResult resumeResult = resumeService.decideAndResume(session, command);
 
-        log.info("HITL decide-and-resume: runId={}, approvalId={}, action={}, resultStatus={}",
-                runId, request.approvalId(), request.action(), resumeResult.status());
+        log.info("HITL decide-and-resume: runId={}, approvalId={}, action={}, resultStatus={}, parentRunId={}",
+                runId, request.approvalId(), request.action(), resumeResult.status(), resumeResult.parentRunId());
 
         return toResumeResponse(resumeResult);
     }
@@ -165,7 +165,20 @@ public class HitlApprovalController {
         );
     }
 
-    private ApprovalResumeResponse toResumeResponse(ReactResumeResult result) {
+    private ApprovalResumeResponse toResumeResponse(ApprovalResumeResult result) {
+        boolean isNested = result.parentRunId() != null;
+
+        // approvalRunId: 嵌套时使用 safeMetadata 中的 childRunId，独立时使用 runId
+        String approvalRunId;
+        if (isNested) {
+            // 嵌套 Supervisor 恢复：前端下次审批时需要使用子 Agent 的 runId
+            Object childRunIdObj = result.safeMetadata().get("childRunId");
+            approvalRunId = childRunIdObj != null ? String.valueOf(childRunIdObj) : null;
+        } else {
+            // 独立 React Agent 恢复：runId 本身就是子 Checkpoint runId
+            approvalRunId = result.runId();
+        }
+
         return new ApprovalResumeResponse(
                 result.runId(),
                 result.threadId(),
@@ -178,7 +191,10 @@ public class HitlApprovalController {
                 result.approvalId(),
                 result.operationName(),
                 result.riskLevel(),
-                result.safeMetadata()
+                result.safeMetadata(),
+                approvalRunId,
+                result.parentRunId(),
+                isNested
         );
     }
 }

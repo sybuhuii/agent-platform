@@ -81,6 +81,24 @@ public class SupervisorThreadPersistencePolicy {
             return false;
         }
 
+        // Phase9 Batch2：DISPATCH_TASKS 非空不可持久化（存在未完成分派）
+        var dispatchTasks = SupervisorStateKeys.getDispatchTasks(finalState);
+        if (dispatchTasks != null && !dispatchTasks.isEmpty()) {
+            return false;
+        }
+
+        // Phase9 Batch2：SUSPENDED_CHILDREN 非空不可持久化（存在暂停子任务）
+        var suspendedChildren = SupervisorStateKeys.getSuspendedChildren(finalState);
+        if (suspendedChildren != null && !suspendedChildren.isEmpty()) {
+            return false;
+        }
+
+        // Phase9 Batch2：RUN_STATUS == SUSPENDED 不可持久化
+        var runStatus = SupervisorStateKeys.getRunStatus(finalState);
+        if (runStatus == com.ksyun.agent.core.run.RunStatus.SUSPENDED) {
+            return false;
+        }
+
         // finalResult 为空不可持久化
         AgentResult finalResult = SupervisorStateKeys.getFinalResult(finalState);
         if (finalResult == null) {

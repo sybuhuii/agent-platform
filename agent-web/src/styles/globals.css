@@ -29,21 +29,21 @@ body {
   min-height: 100dvh;
 }
 
-/* 滚动条 */
+/* 滚动条 — 更纤细 */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--muted-foreground);
-  border-radius: 3px;
-  opacity: 0.5;
+  border-radius: 4px;
+  opacity: 0.3;
 }
 ::-webkit-scrollbar-thumb:hover {
-  opacity: 0.8;
+  opacity: 0.5;
 }
 
 /* 超长单词/URL/代码不撑破页面 */
@@ -58,6 +58,12 @@ a {
 }
 a:hover {
   text-decoration: underline;
+}
+
+/* 选择文本颜色 */
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 /* 尊重 prefers-reduced-motion */

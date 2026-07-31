@@ -13,8 +13,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  approve: [approvalId: string, runId: string]
-  reject: [approvalId: string, runId: string, comment: string]
+  approve: [approvalId: string, runId: string, approvalRunId?: string]
+  reject: [approvalId: string, runId: string, comment: string, approvalRunId?: string]
 }>()
 
 const comment = ref('')
@@ -41,13 +41,13 @@ const isOpen = computed(() => props.message.status === 'pending')
 
 function handleApprove() {
   submitting.value = true
-  emit('approve', props.message.approvalId, props.message.runId)
+  emit('approve', props.message.approvalId, props.message.runId, props.message.approvalRunId)
 }
 
 function handleReject() {
   if (!comment.value.trim()) return
   submitting.value = true
-  emit('reject', props.message.approvalId, props.message.runId, comment.value.trim())
+  emit('reject', props.message.approvalId, props.message.runId, comment.value.trim(), props.message.approvalRunId)
 }
 
 onUnmounted(() => {

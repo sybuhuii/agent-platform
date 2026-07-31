@@ -97,7 +97,8 @@ public class DefaultSupervisorCompleteNode implements SupervisorCompleteNode {
 
         return Map.of(
                 FINAL_RESULT, result,
-                STOP_REASON, SupervisorStopReason.COMPLETED
+                STOP_REASON, SupervisorStopReason.COMPLETED,
+                RUN_STATUS, com.ksyun.agent.core.run.RunStatus.COMPLETED
         );
     }
 }

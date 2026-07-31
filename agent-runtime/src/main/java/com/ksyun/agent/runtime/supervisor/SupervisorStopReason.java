@@ -20,5 +20,8 @@ public enum SupervisorStopReason {
     AGENT_ERROR,
 
     /** 状态非法 */
-    INVALID_STATE
+    INVALID_STATE,
+
+    /** 等待外部审批，不等同于失败 */
+    SUSPENDED
 }

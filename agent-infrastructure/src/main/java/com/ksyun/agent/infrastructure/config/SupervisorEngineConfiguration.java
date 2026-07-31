@@ -3,18 +3,25 @@ package com.ksyun.agent.infrastructure.config;
 import com.ksyun.agent.application.supervisor.AuthenticatedSupervisorApplicationService;
 import com.ksyun.agent.application.supervisor.SupervisorDevApplicationService;
 import com.ksyun.agent.core.run.ThreadIdGenerator;
+import com.ksyun.agent.core.store.CheckpointIdGenerator;
+import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.infrastructure.supervisor.JacksonSupervisorDecisionParser;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadExecutionCoordinator;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadIdValidator;
+import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
 import com.ksyun.agent.runtime.model.ModelInvocationGateway;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
+import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.SupervisorRegistry;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
 import com.ksyun.agent.runtime.supervisor.*;
+import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorCheckpointService;
+import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorCheckpointStateMapper;
+import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorCheckpointValidator;
+import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver;
 import com.ksyun.agent.runtime.supervisor.node.*;
-import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -52,6 +59,49 @@ public class SupervisorEngineConfiguration {
         return new SupervisorPromptBuilder(agentRegistry);
     }
 
+    // --- Phase9 Batch3 新增：Supervisor Checkpoint Bean ---
+
+    @Bean
+    public SupervisorCheckpointStateMapper supervisorCheckpointStateMapper() {
+        return new SupervisorCheckpointStateMapper();
+    }
+
+    @Bean
+    public SupervisorCheckpointValidator supervisorCheckpointValidator(CheckpointValidator checkpointValidator) {
+        return new SupervisorCheckpointValidator(checkpointValidator);
+    }
+
+    @Bean
+    public SupervisorCheckpointService supervisorCheckpointService(
+            CheckpointStore checkpointStore,
+            CheckpointIdGenerator checkpointIdGenerator,
+            SupervisorCheckpointValidator supervisorCheckpointValidator,
+            SupervisorCheckpointStateMapper supervisorCheckpointStateMapper,
+            Clock clock) {
+        return new SupervisorCheckpointService(
+                checkpointStore, checkpointIdGenerator,
+                supervisorCheckpointValidator, supervisorCheckpointStateMapper, clock);
+    }
+
+    @Bean
+    public SupervisorChildRunLinkResolver supervisorChildRunLinkResolver() {
+        return new SupervisorChildRunLinkResolver();
+    }
+
+    @Bean
+    public SupervisorResumeEngine supervisorResumeEngine(
+            SupervisorCheckpointService checkpointService,
+            SupervisorCheckpointStateMapper stateMapper,
+            SupervisorGraphFactory graphFactory,
+            SupervisorThreadConversationStateMapper threadStateMapper,
+            SupervisorThreadPersistencePolicy persistencePolicy,
+            com.ksyun.agent.runtime.react.ReactResumeEngine reactResumeEngine,
+            Clock clock) {
+        return new SupervisorResumeEngine(
+                checkpointService, stateMapper, graphFactory,
+                threadStateMapper, persistencePolicy, reactResumeEngine, clock);
+    }
+
     // --- Supervisor Nodes ---
 
     @Bean
@@ -71,8 +121,9 @@ public class SupervisorEngineConfiguration {
     public SupervisorDispatchNode supervisorDispatchNode(
             AgentRegistry agentRegistry,
             ReactAgentEngine reactAgentEngine,
-            RunIdGenerator runIdGenerator) {
-        return new DefaultSupervisorDispatchNode(agentRegistry, reactAgentEngine, runIdGenerator);
+            RunIdGenerator runIdGenerator,
+            SupervisorCheckpointService checkpointService) {
+        return new DefaultSupervisorDispatchNode(agentRegistry, reactAgentEngine, runIdGenerator, checkpointService);
     }
 
     @Bean
@@ -101,6 +152,18 @@ public class SupervisorEngineConfiguration {
         return new DefaultSupervisorFailureNode();
     }
 
+    @Bean
+    public SupervisorSuspendNode supervisorSuspendNode() {
+        return new DefaultSupervisorSuspendNode();
+    }
+
+    // --- SupervisorDispatchRouter ---
+
+    @Bean
+    public SupervisorDispatchRouter supervisorDispatchRouter() {
+        return new SupervisorDispatchRouter();
+    }
+
     // --- SupervisorRouter ---
 
     @Bean
@@ -118,11 +181,14 @@ public class SupervisorEngineConfiguration {
             SupervisorCompleteNode completeNode,
             SupervisorMaxIterationsNode maxIterationsNode,
             SupervisorFailureNode failureNode,
-            SupervisorRouter router
+            SupervisorSuspendNode suspendNode,
+            SupervisorRouter router,
+            SupervisorDispatchRouter dispatchRouter
     ) {
         return new SupervisorGraphFactory(
                 reasonNode, dispatchNode, aggregateNode,
-                completeNode, maxIterationsNode, failureNode, router
+                completeNode, maxIterationsNode, failureNode, suspendNode,
+                router, dispatchRouter
         );
     }
 

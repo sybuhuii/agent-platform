@@ -54,7 +54,10 @@ public class DefaultSupervisorFailureNode implements SupervisorFailureNode {
                 mappedErrorCode
         );
 
-        return Map.of(FINAL_RESULT, result);
+        return Map.of(
+                FINAL_RESULT, result,
+                RUN_STATUS, com.ksyun.agent.core.run.RunStatus.FAILED
+        );
     }
 
     private String mapErrorCode(AgentErrorCode errorCode) {

@@ -27,7 +27,10 @@ import static org.bsc.langgraph4j.action.AsyncNodeAction.node_async;
  * <p>
  * 图结构：
  * START → supervisor_reason → 条件路由
- * DISPATCH → dispatch_agents → aggregate_results → supervisor_reason
+ * DISPATCH → dispatch_agents → SupervisorDispatchRouter
+ *   ├─ aggregate_results → supervisor_reason
+ *   ├─ suspend → END
+ *   └─ failure → END
  * COMPLETE → complete → END
  * MAX_ITERATIONS → max_iterations_fallback → END
  * FAIL → failure → END
@@ -40,7 +43,9 @@ public class SupervisorGraphFactory {
     private final SupervisorCompleteNode completeNode;
     private final SupervisorMaxIterationsNode maxIterationsNode;
     private final SupervisorFailureNode failureNode;
+    private final SupervisorSuspendNode suspendNode;
     private final SupervisorRouter router;
+    private final SupervisorDispatchRouter dispatchRouter;
 
     public SupervisorGraphFactory(
             SupervisorReasonNode reasonNode,
@@ -49,7 +54,9 @@ public class SupervisorGraphFactory {
             SupervisorCompleteNode completeNode,
             SupervisorMaxIterationsNode maxIterationsNode,
             SupervisorFailureNode failureNode,
-            SupervisorRouter router
+            SupervisorSuspendNode suspendNode,
+            SupervisorRouter router,
+            SupervisorDispatchRouter dispatchRouter
     ) {
         this.reasonNode = reasonNode;
         this.dispatchNode = dispatchNode;
@@ -57,7 +64,9 @@ public class SupervisorGraphFactory {
         this.completeNode = completeNode;
         this.maxIterationsNode = maxIterationsNode;
         this.failureNode = failureNode;
+        this.suspendNode = suspendNode;
         this.router = router;
+        this.dispatchRouter = dispatchRouter;
     }
 
     /**
@@ -75,6 +84,10 @@ public class SupervisorGraphFactory {
      * - failureErrorCode: 覆盖
      * - failureMessage: 覆盖
      * - supervisorDefinition、rootTask、runContext: 初始化后保持稳定，覆盖
+     * - dispatchTasks: 覆盖（本批完整任务状态表）
+     * - suspendedChildren: 覆盖
+     * - runStatus: 覆盖
+     * - checkpointId: 覆盖
      * <p>
      * 节点返回追加字段时只能返回本轮新增内容，不得返回完整历史。
      */
@@ -105,7 +118,13 @@ public class SupervisorGraphFactory {
                 // Phase7 Batch4 上下文窗口 Channel（覆盖语义）
                 entry(CONTEXT_WINDOW_SNAPSHOT, Channels.base((oldVal, newVal) -> newVal)),
                 entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal)),
-                entry(LATEST_MEMORY_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal))
+                entry(LATEST_MEMORY_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal)),
+
+                // Phase9 Batch2 Supervisor 暂停状态 Channel（覆盖语义）
+                entry(RUN_STATUS, Channels.base((oldVal, newVal) -> newVal)),
+                entry(DISPATCH_TASKS, Channels.base((oldVal, newVal) -> newVal)),
+                entry(SUSPENDED_CHILDREN, Channels.base((oldVal, newVal) -> newVal)),
+                entry(CHECKPOINT_ID, Channels.base((oldVal, newVal) -> newVal))
         );
     }
 
@@ -128,6 +147,7 @@ public class SupervisorGraphFactory {
             graph.addNode(COMPLETE, node_async(completeNode));
             graph.addNode(MAX_ITERATIONS_FALLBACK, node_async(maxIterationsNode));
             graph.addNode(FAILURE, node_async(failureNode));
+            graph.addNode(SUSPEND, node_async(suspendNode));
 
             graph.addEdge(StateGraph.START, SUPERVISOR_REASON);
 
@@ -143,18 +163,99 @@ public class SupervisorGraphFactory {
                     )
             );
 
-            graph.addEdge(DISPATCH_AGENTS, AGGREGATE_RESULTS);
+            // Dispatch 后路由：根据子 Agent 执行状态决定路径
+            graph.addConditionalEdges(
+                    DISPATCH_AGENTS,
+                    edge_async(dispatchRouter),
+                    Map.of(
+                            AGGREGATE_RESULTS, AGGREGATE_RESULTS,
+                            SUSPEND, SUSPEND,
+                            FAILURE, FAILURE
+                    )
+            );
+
             graph.addEdge(AGGREGATE_RESULTS, SUPERVISOR_REASON);
 
             graph.addEdge(COMPLETE, StateGraph.END);
             graph.addEdge(MAX_ITERATIONS_FALLBACK, StateGraph.END);
             graph.addEdge(FAILURE, StateGraph.END);
+            graph.addEdge(SUSPEND, StateGraph.END);
 
             return graph.compile();
         } catch (GraphStateException e) {
             throw new AgentFrameworkException(
                     AgentErrorCode.INTERNAL_ERROR,
                     "Failed to compile Supervisor graph",
+                    e
+            );
+        }
+    }
+
+    /**
+     * 构建并编译 Supervisor 恢复图。
+     * <p>
+     * 恢复图从 DISPATCH_AGENTS 节点开始，不经过 Reason。
+     * State 已包含恢复所需的 pendingTasks、dispatchTasks、suspendedChildren 等。
+     * Dispatch 节点检测到已有 dispatchTasks 时，只执行 NOT_STARTED 任务。
+     * <p>
+     * 恢复图与正常图共享所有节点和边，只是入口不同。
+     *
+     * @return 编译后的恢复图
+     */
+    public CompiledGraph<SupervisorAgentState> buildResumeGraph() {
+        try {
+            var graph = new StateGraph<>(
+                    buildChannels(),
+                    SupervisorAgentState::new
+            );
+
+            // 所有节点与正常图相同
+            graph.addNode(SUPERVISOR_REASON, node_async(reasonNode));
+            graph.addNode(DISPATCH_AGENTS, node_async(dispatchNode));
+            graph.addNode(AGGREGATE_RESULTS, node_async(aggregateNode));
+            graph.addNode(COMPLETE, node_async(completeNode));
+            graph.addNode(MAX_ITERATIONS_FALLBACK, node_async(maxIterationsNode));
+            graph.addNode(FAILURE, node_async(failureNode));
+            graph.addNode(SUSPEND, node_async(suspendNode));
+
+            // 恢复图入口：START → DISPATCH_AGENTS
+            graph.addEdge(StateGraph.START, DISPATCH_AGENTS);
+
+            // Dispatch 后路由
+            graph.addConditionalEdges(
+                    DISPATCH_AGENTS,
+                    edge_async(dispatchRouter),
+                    Map.of(
+                            AGGREGATE_RESULTS, AGGREGATE_RESULTS,
+                            SUSPEND, SUSPEND,
+                            FAILURE, FAILURE
+                    )
+            );
+
+            graph.addEdge(AGGREGATE_RESULTS, SUPERVISOR_REASON);
+
+            // Reason 后路由
+            graph.addConditionalEdges(
+                    SUPERVISOR_REASON,
+                    edge_async(router),
+                    Map.of(
+                            DISPATCH_AGENTS, DISPATCH_AGENTS,
+                            COMPLETE, COMPLETE,
+                            MAX_ITERATIONS_FALLBACK, MAX_ITERATIONS_FALLBACK,
+                            FAILURE, FAILURE
+                    )
+            );
+
+            graph.addEdge(COMPLETE, StateGraph.END);
+            graph.addEdge(MAX_ITERATIONS_FALLBACK, StateGraph.END);
+            graph.addEdge(FAILURE, StateGraph.END);
+            graph.addEdge(SUSPEND, StateGraph.END);
+
+            return graph.compile();
+        } catch (GraphStateException e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INTERNAL_ERROR,
+                    "Failed to compile Supervisor resume graph",
                     e
             );
         }

@@ -1,7 +1,10 @@
 /**
- * 侧边栏组件 — 新建对话、会话列表、审批入口、管理功能、主题切换、退出登录。
- * 不展示 Supervisor 技术名称、Agent 列表。
- * 使用 conversationId 选择会话，不使用 Supervisor 名称作为会话 ID。
+ * 侧边栏组件 — ChatGPT 风格。
+ * - 深色/浅色侧边栏，新建对话按钮
+ * - 会话按时间分组（今天/昨天/更早）
+ * - 当前会话高亮，悬停效果
+ * - 底部用户信息、主题切换、退出
+ * - 不展示 Supervisor/Agent 技术名称
  */
 <script setup lang="ts">
 import { computed } from 'vue'
@@ -11,7 +14,8 @@ import { useChatStore } from '@/stores/chat'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useThemeStore } from '@/stores/theme'
 import { usePendingApprovals } from '@/queries'
-import { Plus, MessageSquare, Bell, Users, Shield, Sun, Moon, Monitor, LogOut } from '@lucide/vue'
+import { Plus, MessageSquare, Bell, Users, Shield, Sun, Moon, Monitor, LogOut, ChevronDown } from '@lucide/vue'
+import { ref } from 'vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -97,26 +101,16 @@ function themeLabel(): string {
   }
 }
 
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  const h = d.getHours().toString().padStart(2, '0')
-  const m = d.getMinutes().toString().padStart(2, '0')
-  return `${h}:${m}`
-}
+// 用户信息折叠
+const showUserMenu = ref(false)
 </script>
 
 <template>
-  <aside class="flex flex-col h-full bg-[var(--sidebar)] text-[var(--sidebar-foreground)] border-r border-[var(--sidebar-border)]">
-    <!-- 产品标识 + 新建对话 -->
-    <div class="p-4 pb-2">
-      <div class="flex items-center gap-2 mb-3 px-1">
-        <div class="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-          <MessageSquare class="w-4 h-4 text-[var(--accent-foreground)]" aria-hidden="true" />
-        </div>
-        <span class="text-base font-semibold">智能协作</span>
-      </div>
+  <aside class="flex flex-col h-full bg-[var(--sidebar)] text-[var(--sidebar-foreground)]">
+    <!-- 新建对话按钮 -->
+    <div class="p-2 pt-3">
       <button
-        class="w-full flex items-center justify-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2.5 text-sm font-medium hover:bg-[var(--sidebar-active)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        class="w-full flex items-center gap-2 rounded-xl border border-[var(--sidebar-border)] px-3 py-3 text-sm font-medium hover:bg-[var(--sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
         @click="handleNewConversation"
       >
         <Plus class="w-4 h-4" aria-hidden="true" />
@@ -127,23 +121,17 @@ function formatTime(ts: number): string {
     <!-- 会话列表 -->
     <div class="flex-1 overflow-y-auto px-2 py-1">
       <template v-for="group in groupedConversations" :key="group.label">
-        <p class="text-xs text-[var(--muted-foreground)] px-2 py-1.5 font-medium">{{ group.label }}</p>
+        <p class="text-xs text-[var(--muted-foreground)] px-2 py-2 font-medium">{{ group.label }}</p>
         <button
           v-for="conv in group.conversations"
           :key="conv.conversationId"
-          class="w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] mb-0.5"
+          class="w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] mb-0.5"
           :class="chatStore.activeConversationId === conv.conversationId
-            ? 'bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)] border-l-2 border-[var(--accent)]'
-            : 'hover:bg-[var(--sidebar-active)]/50'"
+            ? 'bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)]'
+            : 'hover:bg-[var(--sidebar-hover)]'"
           @click="handleSelectConversation(conv.conversationId)"
         >
-          <div class="flex items-center gap-2">
-            <MessageSquare class="w-4 h-4 shrink-0 opacity-50" aria-hidden="true" />
-            <div class="flex-1 min-w-0">
-              <div class="truncate">{{ conv.title }}</div>
-              <div class="text-xs text-[var(--muted-foreground)] mt-0.5">{{ formatTime(conv.lastMessageAt) }}</div>
-            </div>
-          </div>
+          <div class="truncate">{{ conv.title }}</div>
         </button>
       </template>
 
@@ -155,7 +143,7 @@ function formatTime(ts: number): string {
     <!-- 底部导航 -->
     <nav class="border-t border-[var(--sidebar-border)] p-2 space-y-0.5">
       <button
-        class="w-full flex items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-[var(--sidebar-active)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        class="w-full flex items-center justify-between rounded-lg px-3 py-2.5 text-sm hover:bg-[var(--sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
         @click="goToApprovals"
       >
         <span class="flex items-center gap-2"><Bell class="w-4 h-4" aria-hidden="true" />待审批</span>
@@ -169,7 +157,7 @@ function formatTime(ts: number): string {
 
       <button
         v-if="canManageUsers"
-        class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--sidebar-active)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        class="w-full flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm hover:bg-[var(--sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
         @click="goToUsers"
       >
         <Users class="w-4 h-4" aria-hidden="true" />
@@ -178,7 +166,7 @@ function formatTime(ts: number): string {
 
       <button
         v-if="canManageRoles"
-        class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--sidebar-active)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        class="w-full flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm hover:bg-[var(--sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
         @click="goToRoles"
       >
         <Shield class="w-4 h-4" aria-hidden="true" />
@@ -186,7 +174,7 @@ function formatTime(ts: number): string {
       </button>
 
       <button
-        class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-[var(--sidebar-active)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        class="w-full flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm hover:bg-[var(--sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
         @click="themeStore.toggleTheme()"
       >
         <component :is="themeIcon" class="w-4 h-4" aria-hidden="true" />
@@ -194,23 +182,30 @@ function formatTime(ts: number): string {
       </button>
     </nav>
 
-    <!-- 用户信息 + 退出登录 -->
-    <div class="border-t border-[var(--sidebar-border)] px-3 py-2">
-      <div v-if="authStore.currentUser" class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-2 min-w-0">
-          <div class="w-7 h-7 rounded-full bg-[var(--accent)]/20 flex items-center justify-center shrink-0">
-            <span class="text-xs font-medium text-[var(--accent)]">{{ authStore.currentUser.username.charAt(0).toUpperCase() }}</span>
-          </div>
-          <span class="text-sm truncate">{{ authStore.currentUser.username }}</span>
-        </div>
-      </div>
+    <!-- 用户信息 -->
+    <div class="border-t border-[var(--sidebar-border)] p-2">
       <button
-        class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--destructive)] hover:bg-[var(--destructive)]/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-        @click="handleLogout"
+        v-if="authStore.currentUser"
+        class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm hover:bg-[var(--sidebar-hover)] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+        @click="showUserMenu = !showUserMenu"
       >
-        <LogOut class="w-4 h-4" aria-hidden="true" />
-        退出登录
+        <div class="w-7 h-7 rounded-full bg-[var(--accent)] flex items-center justify-center shrink-0">
+          <span class="text-xs font-medium text-[var(--accent-foreground)]">{{ authStore.currentUser.username.charAt(0).toUpperCase() }}</span>
+        </div>
+        <span class="flex-1 text-left truncate">{{ authStore.currentUser.username }}</span>
+        <ChevronDown class="w-4 h-4 text-[var(--muted-foreground)]" aria-hidden="true" />
       </button>
+
+      <!-- 展开菜单 -->
+      <div v-if="showUserMenu" class="mt-1 pl-10">
+        <button
+          class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-[var(--destructive)] hover:bg-[var(--destructive)]/10 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+          @click="handleLogout"
+        >
+          <LogOut class="w-4 h-4" aria-hidden="true" />
+          退出登录
+        </button>
+      </div>
     </div>
   </aside>
 </template>

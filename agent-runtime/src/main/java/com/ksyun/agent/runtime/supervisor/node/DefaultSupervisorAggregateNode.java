@@ -6,6 +6,8 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.UserAgentMessage;
+import com.ksyun.agent.core.supervisor.SupervisorChildExecution;
+import com.ksyun.agent.core.supervisor.SupervisorChildExecutionStatus;
 import com.ksyun.agent.runtime.supervisor.SupervisorObservationFormatter;
 import com.ksyun.agent.runtime.supervisor.SupervisorStopReason;
 import org.slf4j.Logger;
@@ -23,6 +25,11 @@ import static com.ksyun.agent.runtime.supervisor.SupervisorStateKeys.*;
  * <p>
  * 汇总子 Agent 执行结果，将观察消息追加到 supervisorMessages。
  * 纯 Java 实现，不添加 Spring 注解。
+ * <p>
+ * Phase9 Batch2 新增：
+ * - 聚合前校验所有任务都已达到可聚合终态（COMPLETED/FAILED）
+ * - 拒绝包含 NOT_STARTED/RUNNING/SUSPENDED 的分派表
+ * - 成功聚合后清理本轮临时状态
  */
 public class DefaultSupervisorAggregateNode implements SupervisorAggregateNode {
 
@@ -38,8 +45,41 @@ public class DefaultSupervisorAggregateNode implements SupervisorAggregateNode {
     public Map<String, Object> apply(com.ksyun.agent.runtime.supervisor.SupervisorAgentState state) throws Exception {
         List<AgentTask> pendingTasks = getPendingTasks(state);
         List<AgentResult> latestResults = getLatestAgentResults(state);
+        List<SupervisorChildExecution> dispatchTasks = getDispatchTasks(state);
+        List<SupervisorChildExecution> suspendedChildren = getSuspendedChildren(state);
 
-        // 校验
+        // 校验：不存在 SUSPENDED_CHILDREN
+        if (suspendedChildren != null && !suspendedChildren.isEmpty()) {
+            return Map.of(
+                    FAILURE_ERROR_CODE, AgentErrorCode.INTERNAL_ERROR,
+                    STOP_REASON, SupervisorStopReason.INVALID_STATE,
+                    FAILURE_MESSAGE, "Aggregate invoked with suspended children"
+            );
+        }
+
+        // 校验：DISPATCH_TASKS 数量与 pendingTasks 一致
+        if (dispatchTasks.size() != pendingTasks.size()) {
+            return Map.of(
+                    FAILURE_ERROR_CODE, AgentErrorCode.INTERNAL_ERROR,
+                    STOP_REASON, SupervisorStopReason.INVALID_STATE,
+                    FAILURE_MESSAGE, "Dispatch tasks count mismatch with pending tasks"
+            );
+        }
+
+        // 校验：不存在 NOT_STARTED / RUNNING / SUSPENDED
+        for (SupervisorChildExecution exec : dispatchTasks) {
+            if (exec.status() == SupervisorChildExecutionStatus.NOT_STARTED
+                    || exec.status() == SupervisorChildExecutionStatus.RUNNING
+                    || exec.status() == SupervisorChildExecutionStatus.SUSPENDED) {
+                return Map.of(
+                        FAILURE_ERROR_CODE, AgentErrorCode.INTERNAL_ERROR,
+                        STOP_REASON, SupervisorStopReason.INVALID_STATE,
+                        FAILURE_MESSAGE, "Aggregate invoked with non-terminal child status: " + exec.status()
+                );
+            }
+        }
+
+        // 校验：实际结果与任务能够按 dispatchIndex 对齐
         if (pendingTasks.isEmpty() || latestResults.isEmpty()) {
             return Map.of(
                     FAILURE_ERROR_CODE, AgentErrorCode.INTERNAL_ERROR,
@@ -63,7 +103,8 @@ public class DefaultSupervisorAggregateNode implements SupervisorAggregateNode {
         List<AgentMessage> observeMessages = new ArrayList<>();
         observeMessages.add(new UserAgentMessage(observationContent));
 
-        // 覆盖清理：清空 pendingTasks、latestAgentResults、decision
+        // 成功聚合后清理本轮临时状态
+        // 不得清理累计的 AGENT_RESULTS 和 Supervisor 消息历史
         // Use HashMap because Map.of() does not allow null values.
         // null value is the correct way to reset a Channel without defaultProvider —
         // Channel.update() treats null as MARK_FOR_RESET, and updateState() removes
@@ -74,6 +115,8 @@ public class DefaultSupervisorAggregateNode implements SupervisorAggregateNode {
         updates.put(PENDING_TASKS, List.of());
         updates.put(LATEST_AGENT_RESULTS, List.of());
         updates.put(DECISION, null);
+        updates.put(DISPATCH_TASKS, List.of());
+        updates.put(SUSPENDED_CHILDREN, List.of());
         return updates;
     }
 }

@@ -56,7 +56,8 @@ public class DefaultSupervisorMaxIterationsNode implements SupervisorMaxIteratio
                 FINAL_RESULT, result,
                 STOP_REASON, SupervisorStopReason.MAX_ITERATIONS_REACHED,
                 PENDING_TASKS, List.of(),
-                LATEST_AGENT_RESULTS, List.of()
+                LATEST_AGENT_RESULTS, List.of(),
+                RUN_STATUS, com.ksyun.agent.core.run.RunStatus.FAILED
         );
     }
 }

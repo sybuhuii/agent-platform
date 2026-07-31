@@ -1,11 +1,11 @@
 /**
- * 人工审批卡片 — 高风险工具触发审批时显示。
- * 不得在前端自行判断审批是否可以绕过。
+ * 审批卡片 — ChatGPT 风格，更紧凑。
  */
 <script setup lang="ts">
 import type { ApprovalChatMessage } from '@/types'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { ShieldAlert } from '@lucide/vue'
 
 const props = defineProps<{
   message: ApprovalChatMessage
@@ -44,9 +44,10 @@ function goToApproval() {
 </script>
 
 <template>
-  <div class="rounded-lg border-2 p-4" :class="riskColor">
+  <div class="rounded-xl border-2 p-4" :class="riskColor">
     <div class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-2">
+        <ShieldAlert class="w-4 h-4" aria-hidden="true" />
         <span class="font-semibold text-sm">需要审批</span>
         <span class="text-xs px-1.5 py-0.5 rounded bg-[var(--destructive)]/20 text-[var(--destructive)]">
           {{ message.riskLevel }}

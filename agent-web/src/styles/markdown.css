@@ -1,4 +1,4 @@
-/* ─── Markdown 内容样式 ─── */
+/* ─── Markdown 内容样式 — ChatGPT 风格 ─── */
 
 .markdown-content {
   line-height: 1.7;
@@ -7,7 +7,7 @@
 }
 
 .markdown-content p {
-  margin-bottom: 0.75em;
+  margin-bottom: 1em;
 }
 .markdown-content p:last-child {
   margin-bottom: 0;
@@ -29,23 +29,23 @@
 .markdown-content ul,
 .markdown-content ol {
   padding-left: 1.5em;
-  margin-bottom: 0.75em;
+  margin-bottom: 1em;
 }
 .markdown-content li {
-  margin-bottom: 0.25em;
+  margin-bottom: 0.35em;
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid var(--border);
+  border-left: 3px solid var(--accent);
   padding-left: 1em;
   color: var(--muted-foreground);
-  margin: 0.75em 0;
+  margin: 1em 0;
 }
 
 .markdown-content table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.75em 0;
+  margin: 1em 0;
   font-size: 0.875em;
 }
 .markdown-content th,
@@ -67,7 +67,7 @@
 
 .markdown-content img {
   max-width: 100%;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
 }
 
 /* 行内代码 */
@@ -81,31 +81,31 @@
 
 /* 代码块容器 */
 .markdown-content pre {
-  margin: 0.75em 0;
-  border-radius: var(--radius);
+  margin: 1em 0;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 .code-block-wrapper {
   position: relative;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  background: #1e293b;
-  margin: 0.75em 0;
+  background: #1e1e1e;
+  margin: 1em 0;
 }
 
 .dark .code-block-wrapper {
-  background: #0f172a;
+  background: #0d0d0d;
 }
 
 .code-block-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.375em 0.75em;
-  background: rgba(0, 0, 0, 0.2);
+  padding: 0.5em 0.75em;
+  background: rgba(255, 255, 255, 0.06);
   font-size: 0.75em;
-  color: #94a3b8;
+  color: #8e8ea0;
 }
 
 .code-block-lang {
@@ -117,17 +117,18 @@
   display: inline-flex;
   align-items: center;
   gap: 0.25em;
-  padding: 0.15em 0.5em;
+  padding: 0.2em 0.5em;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: #8e8ea0;
   cursor: pointer;
   border-radius: var(--radius-sm);
   font-size: 0.75rem;
+  transition: background 150ms, color 150ms;
 }
 .code-block-copy:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
+  color: #ececec;
 }
 .code-block-copy:focus-visible {
   outline: 2px solid var(--ring);
@@ -139,7 +140,7 @@
   padding: 1em;
   overflow-x: auto;
   font-size: 0.8125em;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .code-block-wrapper code {

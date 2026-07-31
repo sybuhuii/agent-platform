@@ -1,100 +1,112 @@
-/* ─── 设计 Token（CSS 变量）─── */
+/* ─── 设计 Token（CSS 变量）─── ChatGPT 风格配色 */
 
 :root {
-  /* 基础色 */
+  /* 基础色 — 干净白底 */
   --background: #ffffff;
-  --foreground: #0f172a;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --border: #e2e8f0;
-  --ring: #3b82f6;
+  --foreground: #0d0d0d;
+  --muted: #f7f7f8;
+  --muted-foreground: #6e6e80;
+  --border: #e5e5e5;
+  --ring: #10a37f;
 
-  /* 侧边栏 */
-  --sidebar: #f8fafc;
-  --sidebar-foreground: #1e293b;
-  --sidebar-border: #e2e8f0;
-  --sidebar-active: #eff6ff;
-  --sidebar-active-foreground: #2563eb;
+  /* 侧边栏 — 浅灰底 */
+  --sidebar: #f9f9f9;
+  --sidebar-foreground: #0d0d0d;
+  --sidebar-border: #e5e5e5;
+  --sidebar-active: #ececec;
+  --sidebar-active-foreground: #0d0d0d;
+  --sidebar-hover: #f0f0f0;
 
-  /* 交互 */
-  --accent: #3b82f6;
+  /* 交互 — 绿色主色 */
+  --accent: #10a37f;
   --accent-foreground: #ffffff;
+  --accent-hover: #0d8f6d;
 
   /* 语义色 */
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
   --warning: #f59e0b;
   --warning-foreground: #1e293b;
-  --success: #22c55e;
+  --success: #10a37f;
   --success-foreground: #ffffff;
 
   /* 输入 */
-  --input: #e2e8f0;
-  --input-foreground: #0f172a;
+  --input: #e5e5e5;
+  --input-foreground: #0d0d0d;
 
   /* 卡片 */
   --card: #ffffff;
-  --card-foreground: #0f172a;
-  --card-border: #e2e8f0;
+  --card-foreground: #0d0d0d;
+  --card-border: #e5e5e5;
 
   /* 弹出层 */
   --popover: #ffffff;
-  --popover-foreground: #0f172a;
+  --popover-foreground: #0d0d0d;
+
+  /* 用户消息气泡 */
+  --user-bubble: #f7f7f8;
+  --user-bubble-foreground: #0d0d0d;
 
   /* 圆角 */
   --radius: 0.5rem;
-  --radius-sm: 0.25rem;
+  --radius-sm: 0.375rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
 
   /* 字体 */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+  --font-sans: "Söhne", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial,
     sans-serif;
-  --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", "Consolas",
-    monospace;
+  --font-mono: "Söhne Mono", "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono",
+    "Consolas", monospace;
 
   /* 动画 */
   --duration-fast: 120ms;
   --duration-normal: 200ms;
 
   /* 布局 */
-  --sidebar-width: 300px;
+  --sidebar-width: 260px;
   --header-height: 0px;
-  --chat-max-width: 800px;
+  --chat-max-width: 768px;
 }
 
 .dark {
-  --background: #0f172a;
-  --foreground: #f1f5f9;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --border: #334155;
-  --ring: #60a5fa;
+  --background: #212121;
+  --foreground: #ececec;
+  --muted: #2f2f2f;
+  --muted-foreground: #8e8ea0;
+  --border: #3e3e3e;
+  --ring: #10a37f;
 
-  --sidebar: #1e293b;
-  --sidebar-foreground: #e2e8f0;
-  --sidebar-border: #334155;
-  --sidebar-active: #1e3a5f;
-  --sidebar-active-foreground: #93c5fd;
+  --sidebar: #171717;
+  --sidebar-foreground: #ececec;
+  --sidebar-border: #2f2f2f;
+  --sidebar-active: #2f2f2f;
+  --sidebar-active-foreground: #ececec;
+  --sidebar-hover: #2a2a2a;
 
-  --accent: #2563eb;
+  --accent: #10a37f;
   --accent-foreground: #ffffff;
+  --accent-hover: #0d8f6d;
 
-  --destructive: #dc2626;
+  --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --warning: #d97706;
-  --warning-foreground: #f1f5f9;
-  --success: #16a34a;
+  --warning: #f59e0b;
+  --warning-foreground: #ececec;
+  --success: #10a37f;
   --success-foreground: #ffffff;
 
-  --input: #334155;
-  --input-foreground: #f1f5f9;
+  --input: #3e3e3e;
+  --input-foreground: #ececec;
 
-  --card: #1e293b;
-  --card-foreground: #f1f5f9;
-  --card-border: #334155;
+  --card: #2f2f2f;
+  --card-foreground: #ececec;
+  --card-border: #3e3e3e;
 
-  --popover: #1e293b;
-  --popover-foreground: #f1f5f9;
+  --popover: #2f2f2f;
+  --popover-foreground: #ececec;
+
+  --user-bubble: #2f2f2f;
+  --user-bubble-foreground: #ececec;
 }
