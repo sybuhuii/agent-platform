@@ -16,6 +16,7 @@ import com.ksyun.agent.runtime.memory.LongTermMemoryContextProvider;
 import com.ksyun.agent.runtime.react.DefaultReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentEngine;
 import com.ksyun.agent.runtime.react.ReactAgentGraphFactory;
+import com.ksyun.agent.runtime.react.ReactPreExecutionRouter;
 import com.ksyun.agent.runtime.react.ReactExecutionValidator;
 import com.ksyun.agent.runtime.react.ReactResumeEngine;
 import com.ksyun.agent.runtime.react.ReactRouter;
@@ -28,8 +29,13 @@ import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointService;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointStateMapper;
 import com.ksyun.agent.runtime.react.checkpoint.ReactResumeValidator;
 import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
+import com.ksyun.agent.runtime.react.node.*;
+import com.ksyun.agent.runtime.hitl.node.NodeHitlInterruptService;
+import com.ksyun.agent.runtime.hitl.node.NodeResumeHandler;
+import com.ksyun.agent.runtime.hitl.node.NodeResumeHandlerRegistry;
+import com.ksyun.agent.runtime.hitl.node.NodeResumeValidator;
+import com.ksyun.agent.runtime.react.checkpoint.NodeCheckpointService;
 import com.ksyun.agent.runtime.tool.approval.ToolOperationFingerprint;
-import com.ksyun.agent.runtime.react.node.DefaultReactSuspendNode;
 import com.ksyun.agent.runtime.run.RunIdGenerator;
 import com.ksyun.agent.runtime.registry.AgentRegistry;
 import com.ksyun.agent.runtime.registry.ToolRegistry;
@@ -42,15 +48,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 
-import com.ksyun.agent.runtime.react.node.ReactCompleteNode;
-import com.ksyun.agent.runtime.react.node.ReactFailureNode;
-import com.ksyun.agent.runtime.react.node.ReactMaxIterationsNode;
-import com.ksyun.agent.runtime.react.node.ReactObserveNode;
-import com.ksyun.agent.runtime.react.node.ReactReasonNode;
-import com.ksyun.agent.runtime.react.node.ReactToolExecutionNode;
+import com.ksyun.agent.core.approval.HumanApprovalGateway;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 
 import java.time.Clock;
+import java.util.List;
 
 /**
  * ReAct 引擎 Spring 装配配置。
@@ -69,8 +71,11 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ApprovalDecisionService approvalDecisionService(CheckpointStore checkpointStore, Clock clock) {
-        return new ApprovalDecisionService(checkpointStore, clock);
+    public ApprovalDecisionService approvalDecisionService(
+            CheckpointStore checkpointStore,
+            HumanApprovalGateway humanApprovalGateway,
+            Clock clock) {
+        return new ApprovalDecisionService(checkpointStore, humanApprovalGateway, clock);
     }
 
     @Bean
@@ -105,11 +110,46 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public NodeCheckpointService nodeCheckpointService(
+            CheckpointStore checkpointStore,
+            CheckpointIdGenerator checkpointIdGenerator,
+            CheckpointValidator checkpointValidator,
+            Clock clock) {
+        return new NodeCheckpointService(
+                checkpointStore, checkpointIdGenerator, checkpointValidator, clock);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public NodeHitlInterruptService nodeHitlInterruptService(
+            ApprovalIdGenerator approvalIdGenerator,
+            HumanApprovalGateway humanApprovalGateway,
+            NodeCheckpointService checkpointService,
+            SensitiveValueSanitizer sanitizer,
+            Clock clock) {
+        return new NodeHitlInterruptService(
+                approvalIdGenerator, humanApprovalGateway, checkpointService, sanitizer, clock);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public NodeResumeValidator nodeResumeValidator() {
+        return new NodeResumeValidator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public NodeResumeHandlerRegistry nodeResumeHandlerRegistry(
+            List<NodeResumeHandler<? extends com.ksyun.agent.core.approval.NodeResumeData>> handlers) {
+        return new NodeResumeHandlerRegistry(handlers);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public CheckpointResumeCoordinator checkpointResumeCoordinator(
             CheckpointStore checkpointStore,
-            ReactResumeValidator resumeValidator,
             Clock clock) {
-        return new CheckpointResumeCoordinator(checkpointStore, resumeValidator, clock);
+        return new CheckpointResumeCoordinator(checkpointStore, clock);
     }
 
     @Bean
@@ -148,11 +188,29 @@ public class ReactEngineConfiguration {
 
     @Bean
     @ConditionalOnBean(ModelInvocationGateway.class)
+    @ConditionalOnMissingBean(ReactPreExecutionNode.class)
+    public ReactPreExecutionNode reactPreExecutionNode() {
+        return new DefaultReactPreExecutionNode();
+    }
+
+    @Bean
+    @ConditionalOnBean(ModelInvocationGateway.class)
+    public ReactPreExecutionRouter reactPreExecutionRouter() {
+        return new ReactPreExecutionRouter();
+    }
+
+    @Bean
+    @ConditionalOnBean(ModelInvocationGateway.class)
     public ReactToolExecutionNode reactToolExecutionNode(
             ToolInvocationGateway toolGateway,
             ReactCheckpointService checkpointService,
+            HumanApprovalGateway humanApprovalGateway,
             Clock clock) {
-        return new com.ksyun.agent.runtime.react.node.DefaultReactToolExecutionNode(toolGateway, checkpointService, clock);
+        return new DefaultReactToolExecutionNode(
+                toolGateway,
+                checkpointService,
+                humanApprovalGateway,
+                clock);
     }
 
     @Bean
@@ -217,6 +275,7 @@ public class ReactEngineConfiguration {
     @Bean
     @ConditionalOnBean(ModelInvocationGateway.class)
     public ReactAgentGraphFactory reactAgentGraphFactory(
+            ReactPreExecutionNode preExecutionNode,
             ReactReasonNode reasonNode,
             ReactToolExecutionNode toolExecutionNode,
             ReactObserveNode observeNode,
@@ -225,12 +284,13 @@ public class ReactEngineConfiguration {
             ReactFailureNode failureNode,
             @Qualifier("reactSuspendNode") NodeAction<ReactAgentState> suspendNode,
             ReactRouter router,
-            ReactToolExecutionRouter toolExecutionRouter
+            ReactToolExecutionRouter toolExecutionRouter,
+            ReactPreExecutionRouter preExecutionRouter
     ) {
         return new ReactAgentGraphFactory(
-                reasonNode, toolExecutionNode, observeNode,
+                preExecutionNode, reasonNode, toolExecutionNode, observeNode,
                 completeNode, maxIterationsNode, failureNode,
-                suspendNode, router, toolExecutionRouter
+                suspendNode, router, toolExecutionRouter, preExecutionRouter
         );
     }
 
@@ -253,12 +313,15 @@ public class ReactEngineConfiguration {
             CheckpointResumeCoordinator resumeCoordinator,
             ReactCheckpointStateMapper stateMapper,
             ReactResumeValidator resumeValidator,
+            NodeResumeValidator nodeResumeValidator,
+            NodeResumeHandlerRegistry nodeResumeHandlerRegistry,
             ReactCheckpointLifecycleService lifecycleService,
             ReactAgentGraphFactory graphFactory,
             ReactThreadConversationStateMapper threadStateMapper,
             ReactThreadPersistencePolicy persistencePolicy,
             Clock clock) {
         return new ReactResumeEngine(resumeCoordinator, stateMapper, resumeValidator,
+                nodeResumeValidator, nodeResumeHandlerRegistry,
                 lifecycleService, graphFactory, threadStateMapper, persistencePolicy, clock);
     }
 
@@ -271,12 +334,20 @@ public class ReactEngineConfiguration {
             CheckpointStore checkpointStore,
             ThreadExecutionCoordinator threadExecutionCoordinator,
             ThreadConversationCheckpointService threadConversationCheckpointService,
-            com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver linkResolver) {
+            com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver linkResolver,
+            HumanApprovalGateway humanApprovalGateway
+    ) {
         com.ksyun.agent.runtime.supervisor.SupervisorResumeEngine supervisorResumeEngine =
                 supervisorResumeEngineProvider.getIfAvailable();
-        return new ApprovalResumeApplicationService(decisionService, resumeEngine,
-                supervisorResumeEngine, checkpointStore, threadExecutionCoordinator,
-                threadConversationCheckpointService, linkResolver);
+        return new ApprovalResumeApplicationService(
+                decisionService,
+                resumeEngine,
+                supervisorResumeEngine,
+                checkpointStore,
+                threadExecutionCoordinator,
+                threadConversationCheckpointService,
+                linkResolver,
+                humanApprovalGateway);
     }
 
     // ---- Dev Application Service ----

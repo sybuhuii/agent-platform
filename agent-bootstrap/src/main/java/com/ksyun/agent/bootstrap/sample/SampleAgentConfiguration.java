@@ -7,10 +7,16 @@ import com.ksyun.agent.core.tool.AgentTool;
 import com.ksyun.agent.core.tool.ToolProvider;
 import com.ksyun.agent.bootstrap.sample.tool.DeleteDemoRecordTool;
 import com.ksyun.agent.bootstrap.sample.tool.ListDemoRecordsTool;
+import com.ksyun.agent.bootstrap.sample.node.SampleNodeApprovalNode;
+import com.ksyun.agent.bootstrap.sample.node.SampleNodeResumeHandler;
 import com.ksyun.agent.infrastructure.sample.InMemoryDemoRecordStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.ksyun.agent.runtime.hitl.node.NodeHitlInterruptService;
+import com.ksyun.agent.runtime.react.ReactAgentGraphFactory;
+import com.ksyun.agent.runtime.react.node.ReactPreExecutionNode;
 
 import java.util.List;
 
@@ -53,5 +59,17 @@ public class SampleAgentConfiguration {
                 new DeleteDemoRecordTool(demoRecordStore)
         );
         return new com.ksyun.agent.infrastructure.tool.builtin.BuiltinToolProvider(tools);
+    }
+
+    @Bean
+    public ReactPreExecutionNode sampleNodeApprovalNode(
+            NodeHitlInterruptService interruptService) {
+        return new SampleNodeApprovalNode(interruptService);
+    }
+
+    @Bean
+    public SampleNodeResumeHandler sampleNodeResumeHandler(
+            ObjectProvider<ReactAgentGraphFactory> graphFactoryProvider) {
+        return new SampleNodeResumeHandler(graphFactoryProvider::getObject);
     }
 }

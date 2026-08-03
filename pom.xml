@@ -38,6 +38,7 @@
         <jackson-bom.version>2.18.2</jackson-bom.version>
         <spring-ai.version>1.1.8</spring-ai.version>
         <langgraph4j.version>1.8.20</langgraph4j.version>
+        <langchain4j-agentic.version>1.15.1-beta25</langchain4j-agentic.version>
     </properties>
 
     <dependencyManagement>
@@ -93,6 +94,12 @@
                 <groupId>org.bsc.langgraph4j</groupId>
                 <artifactId>langgraph4j-core</artifactId>
                 <version>${langgraph4j.version}</version>
+            </dependency>
+            <!-- LangChain4j Agentic：本项目只复用 HumanInTheLoop -->
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-agentic</artifactId>
+                <version>${langchain4j-agentic.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

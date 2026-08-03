@@ -24,6 +24,16 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function register(username: string, password: string, confirmPassword: string): Promise<void> {
+    loading.value = true
+    try {
+      await authApi.register(username, password, confirmPassword)
+      await fetchCurrentUser()
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function fetchCurrentUser(): Promise<void> {
     const sid = getSessionId()
     if (!sid) {
@@ -75,6 +85,7 @@ export const useAuthStore = defineStore('auth', () => {
     authenticated,
     loading,
     login,
+    register,
     fetchCurrentUser,
     logout,
     restoreAuth,

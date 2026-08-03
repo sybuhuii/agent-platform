@@ -11,9 +11,11 @@ import com.ksyun.agent.application.auth.UserSessionRevocationService;
 
 import com.ksyun.agent.core.run.ThreadIdGenerator;
 import com.ksyun.agent.core.security.CredentialHasher;
+import com.ksyun.agent.core.security.RoleDefinition;
 import com.ksyun.agent.core.security.RolePermissionResolver;
 import com.ksyun.agent.core.security.RoleProvider;
 import com.ksyun.agent.core.security.SessionIdGenerator;
+import com.ksyun.agent.core.security.ToolPermissionCodes;
 import com.ksyun.agent.core.security.UserIdGenerator;
 import com.ksyun.agent.core.store.RoleStore;
 import com.ksyun.agent.core.store.SessionStore;
@@ -44,6 +46,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 安全基础设施配置。
@@ -104,6 +107,21 @@ public class SecurityConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(name = "registeredUserRoleProvider")
+    public RoleProvider registeredUserRoleProvider() {
+        return () -> List.of(new RoleDefinition(
+                "REGISTERED_USER",
+                "Default role for self-registered users",
+                Set.of(
+                        ToolPermissionCodes.invoke("calculator"),
+                        ToolPermissionCodes.invoke("current_time"),
+                        ToolPermissionCodes.invoke("echo"),
+                        ToolPermissionCodes.invoke("remember_user_memory")
+                )
+        ));
+    }
+
+    @Bean
     public RoleProviderRegistrar roleProviderRegistrar(
             RoleStore roleStore,
             List<RoleProvider> providers
@@ -125,6 +143,7 @@ public class SecurityConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean
     public AuthApplicationService authApplicationService(
             UserStore userStore,
             SessionStore sessionStore,
@@ -132,11 +151,15 @@ public class SecurityConfiguration {
             SessionIdGenerator sessionIdGenerator,
             RolePermissionResolver rolePermissionResolver,
             SessionValidationService sessionValidationService,
-            SessionTtlConfig sessionTtlConfig) {
+            SessionTtlConfig sessionTtlConfig,
+            UserIdGenerator userIdGenerator,
+            RoleStore roleStore,
+            @Value("${agent.security.registration.default-role:REGISTERED_USER}") String registrationRoleName) {
         return new AuthApplicationService(
                 userStore, sessionStore, credentialHasher,
                 sessionIdGenerator, rolePermissionResolver,
-                sessionValidationService, sessionTtlConfig
+                sessionValidationService, sessionTtlConfig,
+                userIdGenerator, roleStore, registrationRoleName
         );
     }
 

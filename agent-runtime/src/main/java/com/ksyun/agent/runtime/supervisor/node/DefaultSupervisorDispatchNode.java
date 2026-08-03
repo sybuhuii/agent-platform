@@ -82,8 +82,9 @@ public class DefaultSupervisorDispatchNode implements SupervisorDispatchNode {
         // 检查是否已有 dispatchTasks（恢复模式）
         List<SupervisorChildExecution> existingDispatchTasks = getDispatchTasks(state);
 
-        if (!existingDispatchTasks.isEmpty() && pendingTasks.isEmpty()) {
-            // 恢复模式：已有 dispatchTasks，只执行 NOT_STARTED 任务
+        if (!existingDispatchTasks.isEmpty()) {
+            // Checkpoint 会同时保留原始 pendingTasks 和执行状态表。
+            // 只要已有 dispatchTasks，就必须以其状态为准继续恢复，避免把原任务重新初始化并重复执行。
             return dispatchResumedTasks(state, parentContext, rootTask, supervisorIteration, existingDispatchTasks);
         }
 
@@ -408,7 +409,7 @@ public class DefaultSupervisorDispatchNode implements SupervisorDispatchNode {
             meta.put("parentThreadId", link.parentThreadId());
             meta.put("parentTaskId", link.parentTaskId());
             meta.put("dispatchBatchId", link.dispatchBatchId());
-            meta.put("childRunId", link.childRunId());
+            meta.put("approvalRunId", link.childRunId());
             meta.put("childThreadId", link.childThreadId());
             meta.put("childTaskId", link.childTaskId());
             meta.put("dispatchIndex", link.dispatchIndex());

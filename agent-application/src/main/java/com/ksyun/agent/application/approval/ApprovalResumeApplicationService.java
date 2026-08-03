@@ -22,6 +22,7 @@ import com.ksyun.agent.runtime.supervisor.SupervisorResumeEngine;
 import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.ksyun.agent.core.approval.HumanApprovalGateway;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -59,14 +60,17 @@ public class ApprovalResumeApplicationService {
     private final ThreadExecutionCoordinator threadExecutionCoordinator;
     private final ThreadConversationCheckpointService threadConversationCheckpointService;
     private final SupervisorChildRunLinkResolver linkResolver;
+    private final HumanApprovalGateway humanApprovalGateway;
 
-    public ApprovalResumeApplicationService(ApprovalDecisionService decisionService,
-                                              ReactResumeEngine resumeEngine,
-                                              SupervisorResumeEngine supervisorResumeEngine,
-                                              CheckpointStore checkpointStore,
-                                              ThreadExecutionCoordinator threadExecutionCoordinator,
-                                              ThreadConversationCheckpointService threadConversationCheckpointService,
-                                              SupervisorChildRunLinkResolver linkResolver) {
+    public ApprovalResumeApplicationService(
+            ApprovalDecisionService decisionService,
+            ReactResumeEngine resumeEngine,
+            SupervisorResumeEngine supervisorResumeEngine,
+            CheckpointStore checkpointStore,
+            ThreadExecutionCoordinator threadExecutionCoordinator,
+            ThreadConversationCheckpointService threadConversationCheckpointService,
+            SupervisorChildRunLinkResolver linkResolver,
+            HumanApprovalGateway humanApprovalGateway) {
         this.decisionService = Objects.requireNonNull(decisionService);
         this.resumeEngine = Objects.requireNonNull(resumeEngine);
         this.supervisorResumeEngine = supervisorResumeEngine;
@@ -74,6 +78,7 @@ public class ApprovalResumeApplicationService {
         this.threadExecutionCoordinator = Objects.requireNonNull(threadExecutionCoordinator);
         this.threadConversationCheckpointService = Objects.requireNonNull(threadConversationCheckpointService);
         this.linkResolver = Objects.requireNonNull(linkResolver);
+        this.humanApprovalGateway = Objects.requireNonNull(humanApprovalGateway);
     }
 
     /**
@@ -164,8 +169,10 @@ public class ApprovalResumeApplicationService {
             String threadId) {
 
         ThreadExecutionLease lease = threadExecutionCoordinator.acquire(userId, threadId);
+        boolean decisionRecorded = false;
         try {
-            ApprovalDecisionResult decisionResult = decisionService.decide(operator, command);
+            decisionService.decide(operator, command);
+            decisionRecorded = true;
 
             ThreadExecutionOutcome outcome = resumeEngine.resumeThread(command.runId(), operator);
             AgentResult agentResult = outcome.result();
@@ -175,6 +182,9 @@ public class ApprovalResumeApplicationService {
             ReactResumeResult reactResult = ReactResumeResult.from(command.runId(), threadId, agentResult);
             return ApprovalResumeResult.fromReactResult(reactResult);
         } finally {
+            if (decisionRecorded) {
+                humanApprovalGateway.release(command.approvalId());
+            }
             lease.close();
         }
     }
@@ -205,26 +215,24 @@ public class ApprovalResumeApplicationService {
         // 使用父 Supervisor threadId 作为 Lease Key
         String parentThreadId = link.parentThreadId();
         ThreadExecutionLease lease = threadExecutionCoordinator.acquire(userId, parentThreadId);
+        boolean decisionRecorded = false;
         try {
-            // 1. 记录子 Checkpoint 的审批决定
-            ApprovalDecisionResult decisionResult = decisionService.decide(operator, command);
+            decisionService.decide(operator, command);
+            decisionRecorded = true;
 
-            // 2. 恢复父 Supervisor（内部会恢复子 Agent）
             ThreadExecutionOutcome supervisorOutcome =
                     supervisorResumeEngine.resumeSupervisor(link.parentRunId(), operator);
 
             AgentResult supervisorResult = supervisorOutcome.result();
-
-            // 3. 线程状态同步（使用父 Supervisor threadId）
             handleThreadSync(link.parentRunId(), userId, parentThreadId, supervisorOutcome, supervisorResult);
-
-            // 4. 精确清理子 Agent HITL Checkpoint
             cleanupChildHitlCheckpoint(command.runId(), userId, childThreadId);
 
-            // 5. 返回 Supervisor 恢复结果
             return ApprovalResumeResult.fromSupervisorResult(
                     supervisorResult, link.parentRunId(), parentThreadId);
         } finally {
+            if (decisionRecorded) {
+                humanApprovalGateway.release(command.approvalId());
+            }
             lease.close();
         }
     }

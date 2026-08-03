@@ -168,12 +168,12 @@ public class HitlApprovalController {
     private ApprovalResumeResponse toResumeResponse(ApprovalResumeResult result) {
         boolean isNested = result.parentRunId() != null;
 
-        // approvalRunId: 嵌套时使用 safeMetadata 中的 childRunId，独立时使用 runId
+        // approvalRunId: 嵌套时使用统一的 safeMetadata 字段，独立时使用 runId
         String approvalRunId;
         if (isNested) {
             // 嵌套 Supervisor 恢复：前端下次审批时需要使用子 Agent 的 runId
-            Object childRunIdObj = result.safeMetadata().get("childRunId");
-            approvalRunId = childRunIdObj != null ? String.valueOf(childRunIdObj) : null;
+            Object approvalRunIdValue = result.safeMetadata().get("approvalRunId");
+            approvalRunId = approvalRunIdValue != null ? String.valueOf(approvalRunIdValue) : null;
         } else {
             // 独立 React Agent 恢复：runId 本身就是子 Checkpoint runId
             approvalRunId = result.runId();

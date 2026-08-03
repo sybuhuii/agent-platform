@@ -75,6 +75,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import com.ksyun.agent.core.approval.HumanApprovalGateway;
+import com.ksyun.agent.runtime.hitl.LangChain4jHumanApprovalGateway;
+import org.springframework.beans.factory.annotation.Qualifier;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import java.time.Clock;
 import java.util.List;
@@ -311,6 +318,25 @@ public class AgentFrameworkAutoConfiguration {
         return Clock.systemUTC();
     }
 
+    @Bean(name = "humanApprovalExecutor", destroyMethod = "shutdownNow")
+    @ConditionalOnMissingBean(name = "humanApprovalExecutor")
+    public ExecutorService humanApprovalExecutor() {
+        AtomicInteger sequence = new AtomicInteger();
+        return Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable,
+                    "langchain4j-hitl-" + sequence.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(HumanApprovalGateway.class)
+    public HumanApprovalGateway humanApprovalGateway(
+            @Qualifier("humanApprovalExecutor") ExecutorService executor) {
+        return new LangChain4jHumanApprovalGateway(executor);
+    }
+
     @Bean
     public ToolApprovalInterceptor toolApprovalInterceptor(
             ToolRegistry toolRegistry,
@@ -318,8 +344,16 @@ public class AgentFrameworkAutoConfiguration {
             ApprovalIdGenerator approvalIdGenerator,
             SensitiveValueSanitizer sanitizer,
             ToolOperationFingerprint fingerprint,
+            HumanApprovalGateway humanApprovalGateway,
             Clock clock) {
-        return new ToolApprovalInterceptor(toolRegistry, approvalPolicy, approvalIdGenerator, sanitizer, fingerprint, clock);
+        return new ToolApprovalInterceptor(
+                toolRegistry,
+                approvalPolicy,
+                approvalIdGenerator,
+                sanitizer,
+                fingerprint,
+                humanApprovalGateway,
+                clock);
     }
 
     @Bean

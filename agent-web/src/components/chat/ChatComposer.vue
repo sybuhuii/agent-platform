@@ -17,11 +17,15 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const inputValue = ref('')
 
 const { resize } = useTextareaAutosize(textareaRef, inputValue, {
-  minHeight: 44,
-  maxHeight: 200
+  minHeight: 54,
+  maxHeight: 174
 })
 
-const canSend = computed(() => inputValue.value.trim().length > 0 && !chatStore.isRunning)
+const canSend = computed(() =>
+  inputValue.value.trim().length > 0 &&
+  chatStore.isReady &&
+  !chatStore.isRunning
+)
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -43,25 +47,25 @@ function handleCancel() {
 </script>
 
 <template>
-  <div class="shrink-0 bg-[var(--background)] px-4 pb-4 pt-2 pb-[env(safe-area-inset-bottom,0px)]">
-    <div class="max-w-[var(--chat-max-width)] mx-auto">
+  <div class="chat-composer-area">
+    <div class="chat-composer-shell">
       <!-- 输入框容器 -->
-      <div class="relative flex items-end rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm focus-within:shadow-md focus-within:border-[var(--ring)]/50 transition-all">
+      <div class="chat-composer-box">
         <textarea
           ref="textareaRef"
           v-model="inputValue"
           :disabled="chatStore.isRunning"
-          placeholder="给智能协作发送消息..."
+          placeholder="询问任何问题，描述你希望完成的任务"
           rows="1"
-          class="flex-1 bg-transparent text-[0.9375rem] resize-none outline-none placeholder:text-[var(--muted-foreground)] min-h-[52px] max-h-[200px] py-3.5 pl-4 pr-14"
+          class="chat-composer-input"
           @keydown="handleKeydown"
           @input="resize"
         />
         <!-- 发送/取消按钮 -->
-        <div class="absolute right-2 bottom-2.5">
+        <div class="chat-composer-actions">
           <button
             v-if="chatStore.isRunning"
-            class="inline-flex items-center justify-center h-8 w-8 rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--destructive)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            class="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[var(--foreground)] text-[var(--background)] hover:opacity-80 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             aria-label="取消等待"
             @click="handleCancel"
           >
@@ -69,9 +73,9 @@ function handleCancel() {
           </button>
           <button
             v-else
-            class="inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            class="inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
             :class="canSend
-              ? 'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]'
+              ? 'bg-[var(--foreground)] text-[var(--background)] hover:opacity-80'
               : 'bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed'"
             :disabled="!canSend"
             aria-label="发送消息"
@@ -81,10 +85,7 @@ function handleCancel() {
           </button>
         </div>
       </div>
-      <!-- AI 免责提示 -->
-      <p class="text-xs text-[var(--muted-foreground)] mt-2 text-center">
-        内容由 AI 生成，请仔细甄别
-      </p>
+      <p class="chat-disclaimer">AI 可能会出错，请核查重要信息。</p>
     </div>
   </div>
 </template>

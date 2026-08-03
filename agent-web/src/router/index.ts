@@ -11,6 +11,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true }
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/auth/RegisterView.vue'),
+    meta: { public: true }
+  },
+  {
     path: '/',
     name: 'Chat',
     component: () => import('@/views/chat/ChatView.vue')
@@ -64,8 +70,8 @@ router.beforeEach(async (to) => {
 
   const authStore = useAuthStore()
 
-  // 已登录访问 /login 跳转首页
-  if (to.path === '/login' && authStore.authenticated) {
+  // 已登录访问公开认证页跳转首页
+  if ((to.path === '/login' || to.path === '/register') && authStore.authenticated) {
     return { path: '/' }
   }
 

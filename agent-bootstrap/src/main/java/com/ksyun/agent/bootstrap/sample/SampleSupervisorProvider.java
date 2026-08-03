@@ -45,7 +45,13 @@ public class SampleSupervisorProvider implements SupervisorProvider {
                         + "计算类任务优先选择calculator_agent。\n"
                         + "时间、文本搜索、回显或综合工具任务可选择utility_agent。\n"
                         + "删除记录类任务选择approval_demo_agent，该Agent的删除操作需要人工审批。\n"
+                        + "每条最新用户消息都是一个新的任务轮次；历史审批决定只属于当时的工具调用，不能沿用到新的用户请求。\n"
+                        + "最新消息再次要求删除时，即使记录ID与历史请求相同，也必须重新分派approval_demo_agent并触发新的审批。\n"
+                        + "节点审批、中断恢复或发布演示类任务选择node_approval_demo_agent。\n"
                         + "复杂任务允许分派多个子任务，但当前按顺序执行。\n"
+                        + "单条记录删除请求只分派一个approval_demo_agent子任务；查询、删除和结果确认由该子Agent在同一任务内完成。\n"
+                        + "仅在当前任务轮次内，不得为同一条记录重复分派删除或验证子任务。\n"
+                        + "汇总时必须保留子Agent已经成功执行的操作；删除后的查询未找到目标记录表示删除已验证，不能表述为未执行删除。\n"
                         + "不得自行执行专业工具。\n"
                         + "不得伪造子Agent执行结果。\n"
                         + "收到子Agent观察结果后，判断是否需要继续分派。\n"
@@ -55,7 +61,7 @@ public class SampleSupervisorProvider implements SupervisorProvider {
                         + "不得输出详细思维链，只输出简洁decisionSummary。\n"
                         + "不得选择memberAgents之外的Agent。\n"
                         + "不得把子Agent当作工具调用。",
-                Set.of("utility_agent", "calculator_agent", "approval_demo_agent"),
+                Set.of("utility_agent", "calculator_agent", "approval_demo_agent", "node_approval_demo_agent"),
                 5
         );
     }

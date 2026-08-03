@@ -2,6 +2,7 @@ package com.ksyun.agent.api.controller;
 
 import com.ksyun.agent.api.dto.LoginRequest;
 import com.ksyun.agent.api.dto.LoginResponse;
+import com.ksyun.agent.api.dto.RegisterRequest;
 import com.ksyun.agent.api.dto.SessionInfoResponse;
 import com.ksyun.agent.api.dto.UserInfoResponse;
 import com.ksyun.agent.api.security.AuthenticatedSessionAttributes;
@@ -62,6 +63,23 @@ public class AuthController {
                     .body(Map.of("errorCode", AgentErrorCode.AUTHENTICATION_FAILED.name(),
                             "message", "Authentication failed"));
         }
+    }
+
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
+        AuthApplicationService authService = authServiceProvider.getIfAvailable();
+        if (authService == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("errorCode", AgentErrorCode.AUTHENTICATION_FAILED.name(),
+                            "message", "Registration service is not available"));
+        }
+
+        UserSession session = authService.register(
+                request.username(),
+                request.password(),
+                request.confirmPassword()
+        );
+        return ResponseEntity.status(HttpStatus.CREATED).body(toLoginResponse(session));
     }
 
     @PostMapping("/logout")

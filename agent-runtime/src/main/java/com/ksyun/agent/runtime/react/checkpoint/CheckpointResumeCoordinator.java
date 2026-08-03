@@ -27,14 +27,11 @@ import java.util.Objects;
 public class CheckpointResumeCoordinator {
 
     private final CheckpointStore checkpointStore;
-    private final ReactResumeValidator resumeValidator;
     private final Clock clock;
 
     public CheckpointResumeCoordinator(CheckpointStore checkpointStore,
-                                         ReactResumeValidator resumeValidator,
                                          Clock clock) {
         this.checkpointStore = Objects.requireNonNull(checkpointStore);
-        this.resumeValidator = Objects.requireNonNull(resumeValidator);
         this.clock = Objects.requireNonNull(clock);
     }
 

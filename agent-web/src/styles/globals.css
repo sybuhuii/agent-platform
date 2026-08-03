@@ -29,6 +29,196 @@ body {
   min-height: 100dvh;
 }
 
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ─── 公开认证页 ─── */
+
+.auth-page {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background:
+    radial-gradient(circle at 50% -20%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 34rem),
+    var(--background);
+}
+
+.auth-header {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+}
+
+.auth-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--foreground);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.auth-brand:hover { text-decoration: none; }
+
+.auth-brand-mark {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-foreground);
+  background: var(--foreground);
+  border-radius: 10px;
+}
+
+.auth-panel {
+  width: min(100% - 32px, 400px);
+  margin: clamp(54px, 10vh, 108px) auto auto;
+  padding-bottom: 48px;
+}
+
+.auth-heading {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.auth-heading h1 {
+  color: var(--foreground);
+  font-size: clamp(28px, 4vw, 34px);
+  line-height: 1.15;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.auth-heading p {
+  margin-top: 10px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.auth-form { display: grid; gap: 18px; }
+
+.auth-field { display: grid; gap: 8px; }
+
+.auth-field > span {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.auth-field input {
+  width: 100%;
+  height: 54px;
+  padding: 0 16px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 12px;
+  outline: none;
+  transition: border-color var(--duration-normal), box-shadow var(--duration-normal);
+}
+
+.auth-field input::placeholder { color: color-mix(in srgb, var(--muted-foreground) 75%, transparent); }
+
+.auth-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.auth-field input:disabled { opacity: .62; }
+
+.auth-submit,
+.auth-secondary {
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform var(--duration-fast), background var(--duration-normal), border-color var(--duration-normal);
+}
+
+.auth-submit {
+  color: var(--accent-foreground);
+  background: var(--accent);
+  border: 0;
+  cursor: pointer;
+}
+
+.auth-submit:not(:disabled):hover { background: var(--accent-hover); }
+.auth-submit:not(:disabled):active { transform: scale(.99); }
+.auth-submit:disabled { opacity: .45; cursor: not-allowed; }
+
+.auth-secondary {
+  width: 100%;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+}
+
+.auth-secondary:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  text-decoration: none;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 16px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.auth-divider::before,
+.auth-divider::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+
+.auth-error {
+  padding: 11px 13px;
+  color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--destructive) 24%, transparent);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.auth-requirements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: -8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.auth-requirements span { display: inline-flex; align-items: center; gap: 4px; }
+.auth-requirements .valid { color: var(--success); }
+
+.auth-footnote {
+  margin-top: 28px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .auth-header { height: 62px; padding: 0 18px; }
+  .auth-panel { margin-top: 36px; }
+}
+
 /* 滚动条 — 更纤细 */
 ::-webkit-scrollbar {
   width: 4px;
@@ -75,4 +265,397 @@ a:hover {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ─── 聊天工作区 ─── */
+
+.chat-workspace {
+  position: relative;
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 2%, transparent), transparent 34%),
+    var(--background);
+}
+
+.chat-scroll-area { scrollbar-gutter: stable; }
+
+.chat-run-status {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  z-index: 10;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 18px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .06);
+}
+
+.chat-thread-shell {
+  width: min(calc(100% - 40px), 1040px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 72px 28px 120px;
+}
+
+.chat-message { width: 100%; }
+.chat-message-user { display: flex; justify-content: flex-end; margin-bottom: 36px; }
+.chat-message-assistant,
+.chat-message-approval { margin-bottom: 32px; }
+
+.chat-user-message {
+  display: flex;
+  max-width: min(72%, 660px);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.chat-user-bubble {
+  max-width: 100%;
+  padding: 13px 18px;
+  color: var(--user-bubble-foreground);
+  background: color-mix(in srgb, var(--user-bubble) 86%, #eeecff);
+  border-radius: 18px;
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.chat-message-time {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.chat-assistant-row { display: flex; align-items: flex-start; gap: 18px; }
+
+.agent-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--background);
+  background: var(--foreground);
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+
+.agent-response {
+  min-width: 0;
+  flex: 1;
+  padding-top: 2px;
+  font-size: 15px;
+  line-height: 1.72;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 10px 0 0 -7px;
+  color: var(--muted-foreground);
+}
+
+.message-actions button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.message-actions button:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+/* ─── 聊天审批卡片 ─── */
+
+.approval-card {
+  width: 100%;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, .04);
+}
+
+.approval-card-approved {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  background: color-mix(in srgb, var(--success) 3%, var(--card));
+}
+
+.approval-card-pending {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 46%, var(--border));
+  background: color-mix(in srgb, var(--warning) 3%, var(--card));
+}
+
+.approval-card-rejected {
+  color: var(--destructive);
+  border-color: color-mix(in srgb, var(--destructive) 42%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 3%, var(--card));
+}
+
+.approval-card-header,
+.approval-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.approval-risk-badge,
+.approval-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.approval-operation {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.approval-reason {
+  margin-top: 14px;
+  padding: 14px 16px;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--muted) 66%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 12%, var(--border));
+  border-radius: 14px;
+}
+
+.approval-reason > span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.approval-reason p { margin-top: 5px; font-size: 14px; }
+
+.approval-card-footer {
+  margin-top: 16px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.approval-card-footer button {
+  padding: 7px 12px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-weight: 600;
+}
+
+/* ─── 审批弹窗 ─── */
+
+.approval-dialog { padding: 24px 26px 20px !important; border-radius: 18px !important; }
+.approval-dialog-body { display: flex; flex-direction: column; gap: 16px; }
+
+.approval-dialog-summary {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 15px;
+  border: 1px solid;
+  border-radius: 15px;
+}
+
+.approval-dialog-risk {
+  padding: 5px 9px;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.approval-dialog-type,
+.approval-dialog-status {
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.approval-dialog-type { color: var(--muted-foreground); background: var(--muted); }
+.approval-dialog-status { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+
+.approval-dialog-reason span,
+.approval-arguments-section h3 { color: var(--muted-foreground); font-size: 13px; }
+.approval-dialog-reason p { margin-top: 6px; font-size: 14px; line-height: 1.6; }
+
+.approval-dialog-placeholder,
+.approval-arguments-code {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--success) 3%, var(--muted));
+}
+
+.approval-dialog-placeholder { padding: 18px; font-size: 14px; color: var(--muted-foreground); }
+
+.approval-arguments-section { position: relative; }
+.approval-arguments-code {
+  max-height: 170px;
+  overflow: auto;
+  padding: 13px 14px;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval-copy-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  border-radius: 8px;
+}
+.approval-copy-button:hover { color: var(--foreground); background: var(--muted); }
+
+.approval-comment-input {
+  width: 100%;
+  resize: none;
+  padding: 10px 12px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 14px;
+  outline: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.approval-comment-input:focus { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 16%, transparent); }
+
+.approval-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 2px -26px -20px;
+  padding: 16px 26px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 34%, transparent);
+  border-radius: 0 0 18px 18px;
+}
+
+.approval-dialog-actions button {
+  min-width: 96px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: opacity 150ms ease, background-color 150ms ease;
+}
+.approval-dialog-actions button:disabled { cursor: not-allowed; opacity: .48; }
+.approval-secondary-button { color: var(--foreground); background: var(--background); border: 1px solid var(--border); }
+.approval-reject-button { color: var(--destructive); background: var(--background); border: 1px solid color-mix(in srgb, var(--destructive) 32%, var(--border)); }
+.approval-approve-button { color: white; background: var(--success); border: 1px solid var(--success); }
+.approval-approve-button:not(:disabled):hover { opacity: .88; }
+
+.chat-composer-area {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  padding: 20px 28px max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, transparent 0, var(--background) 24px, var(--background) 100%);
+}
+
+.chat-composer-shell {
+  width: min(100%, 1040px);
+  margin: 0 auto;
+}
+
+.chat-disclaimer {
+  margin-top: 13px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-align: center;
+}
+
+.chat-composer-box {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  background: var(--card);
+  border: 1px solid var(--border);
+  min-height: 56px;
+  border-radius: 24px;
+  box-shadow: 0 5px 20px rgba(15, 23, 42, .07);
+  transition: border-color var(--duration-normal), box-shadow var(--duration-normal);
+}
+
+.chat-composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
+  box-shadow: 0 5px 22px rgba(0, 0, 0, .09);
+}
+
+.chat-composer-input {
+  min-height: 54px;
+  max-height: 174px;
+  flex: 1;
+  padding: 15px 60px 15px 20px;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  resize: none;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.chat-composer-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 11px;
+}
+
+.chat-composer-input::placeholder { color: var(--muted-foreground); }
+
+@media (max-width: 767px) {
+  .chat-thread-shell { width: 100%; padding: 58px 16px 88px; }
+  .chat-user-message { max-width: 88%; }
+  .chat-assistant-row { gap: 10px; }
+  .chat-composer-area { padding-inline: 10px; }
+  .chat-composer-box { min-height: 56px; border-radius: 20px; }
+  .chat-composer-input { min-height: 54px; padding: 15px 56px 15px 18px; }
+  .approval-card { padding: 15px; }
+  .approval-card-header { align-items: flex-start; }
+  .approval-card-header,
+  .approval-card-footer { flex-wrap: wrap; }
+  .approval-dialog { width: calc(100% - 24px) !important; padding: 24px 20px 20px !important; }
+  .approval-dialog-summary { align-items: flex-start; flex-direction: column; }
+  .approval-dialog-actions { margin: 2px -20px -20px; padding: 16px 20px; flex-wrap: wrap; }
+  .approval-dialog-actions button { min-width: 0; flex: 1; }
 }

@@ -19,14 +19,11 @@ import com.ksyun.agent.runtime.tool.ToolInvocationGateway;
 import com.ksyun.agent.runtime.tool.approval.AgentInterruptSignal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.ksyun.agent.core.approval.HumanApprovalGateway;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 import static com.ksyun.agent.runtime.react.ReactStateKeys.*;
 
@@ -58,14 +55,18 @@ public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
 
     private final ToolInvocationGateway toolGateway;
     private final ReactCheckpointService checkpointService;
+    private final HumanApprovalGateway humanApprovalGateway;
     private final Clock clock;
 
-    public DefaultReactToolExecutionNode(ToolInvocationGateway toolGateway,
-                                          ReactCheckpointService checkpointService,
-                                          Clock clock) {
-        this.toolGateway = toolGateway;
-        this.checkpointService = checkpointService;
-        this.clock = clock;
+    public DefaultReactToolExecutionNode(
+            ToolInvocationGateway toolGateway,
+            ReactCheckpointService checkpointService,
+            HumanApprovalGateway humanApprovalGateway,
+            Clock clock) {
+        this.toolGateway = Objects.requireNonNull(toolGateway);
+        this.checkpointService = Objects.requireNonNull(checkpointService);
+        this.humanApprovalGateway = Objects.requireNonNull(humanApprovalGateway);
+        this.clock = Objects.requireNonNull(clock);
     }
 
     @Override
@@ -243,6 +244,7 @@ public class DefaultReactToolExecutionNode implements ReactToolExecutionNode {
                     buffer
             );
         } catch (Exception e) {
+            humanApprovalGateway.release(approval.approvalId());
             log.error("Failed to save checkpoint during suspension: runId={}", runContext.runId(), e);
             return Map.of(
                     STOP_REASON, ReactStopReason.TOOL_ERROR,

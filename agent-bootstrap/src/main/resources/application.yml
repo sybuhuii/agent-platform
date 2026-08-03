@@ -29,6 +29,9 @@ agent:
   auth:
     enabled: ${AGENT_AUTH_ENABLED:true}
 
+  web:
+    allowed-origin-patterns: ${AGENT_WEB_ALLOWED_ORIGIN_PATTERNS:http://localhost:*,http://127.0.0.1:*}
+
   context:
     enabled: ${AGENT_CONTEXT_ENABLED:true}
     message-count-trimming-enabled: ${AGENT_CONTEXT_MESSAGE_COUNT_TRIMMING:true}
@@ -69,5 +72,7 @@ agent:
 
 
   security:
+    registration:
+      default-role: ${AGENT_REGISTRATION_DEFAULT_ROLE:REGISTERED_USER}
     session:
       ttl: ${AGENT_SESSION_TTL:PT8H}

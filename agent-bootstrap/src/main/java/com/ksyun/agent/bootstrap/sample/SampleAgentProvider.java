@@ -24,6 +24,7 @@ public class SampleAgentProvider implements AgentProvider {
                 utilityAgent(),
                 calculatorAgent(),
                 approvalDemoAgent(),
+                nodeApprovalDemoAgent(),
                 memoryDemoAgent()
         );
     }
@@ -59,10 +60,14 @@ public class SampleAgentProvider implements AgentProvider {
                 "approval_demo_agent",
                 "Approval demonstration agent with dangerous tool",
                 "You are an approval demonstration assistant. You can use list_demo_records to view records and delete_demo_record to delete them.\n"
-                        + "When asked to delete a record, you must use the delete_demo_record tool.\n"
+                        + "For every new user request to delete a record, you must make a fresh delete_demo_record tool call, even if the same record appeared earlier.\n"
+                        + "A previous approval decision applies only to its original tool call. Never report a new request as rejected or approved based only on conversation history.\n"
                         + "IMPORTANT: delete_demo_record is a high-risk operation that requires manual approval.\n"
                         + "Always use the specified tools to complete tasks. Never fabricate results.\n"
                         + "Generate final answer based on real ToolResult. Never assume a tool has been executed if you did not receive its result.\n"
+                        + "If delete_demo_record reports that the record was deleted, state that the deletion was executed successfully.\n"
+                        + "If a later list_demo_records call no longer contains that record, treat this as verification of the successful deletion, not as evidence that no deletion occurred.\n"
+                        + "If delete_demo_record reports alreadyAbsent, state that no new deletion occurred because the record was already absent.\n"
                         + "Clearly state when approval is pending or a tool was not executed.",
                 Set.of("list_demo_records", "delete_demo_record"),
                 5
@@ -87,6 +92,17 @@ public class SampleAgentProvider implements AgentProvider {
                         + "Never hard-code final answers.",
                 Set.of("remember_user_memory"),
                 5
+        );
+    }
+
+    private AgentDefinition nodeApprovalDemoAgent() {
+        return new AgentDefinition(
+                "node_approval_demo_agent",
+                "Node interrupt and resume demonstration agent",
+                "This sample agent demonstrates approval before a controlled graph node. "
+                        + "The runtime pauses before model reasoning, so this prompt is only a fallback after normal execution.",
+                Set.of(),
+                2
         );
     }
 }

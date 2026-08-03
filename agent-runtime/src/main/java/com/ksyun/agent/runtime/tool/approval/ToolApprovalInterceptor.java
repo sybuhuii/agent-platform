@@ -18,6 +18,7 @@ import com.ksyun.agent.runtime.tool.ToolExecutionChain;
 import com.ksyun.agent.runtime.tool.ToolInterceptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.ksyun.agent.core.approval.HumanApprovalGateway;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -62,19 +63,23 @@ public class ToolApprovalInterceptor implements ToolInterceptor {
     private final ApprovalIdGenerator approvalIdGenerator;
     private final SensitiveValueSanitizer sanitizer;
     private final ToolOperationFingerprint fingerprint;
+    private final HumanApprovalGateway humanApprovalGateway;
     private final Clock clock;
 
-    public ToolApprovalInterceptor(ToolRegistry toolRegistry,
-                                    ToolApprovalPolicy approvalPolicy,
-                                    ApprovalIdGenerator approvalIdGenerator,
-                                    SensitiveValueSanitizer sanitizer,
-                                    ToolOperationFingerprint fingerprint,
-                                    Clock clock) {
+    public ToolApprovalInterceptor(
+            ToolRegistry toolRegistry,
+            ToolApprovalPolicy approvalPolicy,
+            ApprovalIdGenerator approvalIdGenerator,
+            SensitiveValueSanitizer sanitizer,
+            ToolOperationFingerprint fingerprint,
+            HumanApprovalGateway humanApprovalGateway,
+            Clock clock) {
         this.toolRegistry = Objects.requireNonNull(toolRegistry);
         this.approvalPolicy = Objects.requireNonNull(approvalPolicy);
         this.approvalIdGenerator = Objects.requireNonNull(approvalIdGenerator);
         this.sanitizer = Objects.requireNonNull(sanitizer);
         this.fingerprint = Objects.requireNonNull(fingerprint);
+        this.humanApprovalGateway = Objects.requireNonNull(humanApprovalGateway);
         this.clock = Objects.requireNonNull(clock);
     }
 
@@ -143,7 +148,8 @@ public class ToolApprovalInterceptor implements ToolInterceptor {
             log.info("Tool approval required: toolName={}, approvalId={}, runId={}, userId={}",
                     toolName, approvalId, runContext.runId(), runContext.userId());
 
-            // 抛出中断信号
+            // 先确认 LangChain4j PendingResponse 已注册，再让现有节点保存 Checkpoint 并退出。
+            humanApprovalGateway.interrupt(pendingApproval);
             throw new AgentInterruptSignal(pendingApproval);
         }
 

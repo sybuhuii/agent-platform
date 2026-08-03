@@ -8,6 +8,16 @@ export async function login(username: string, password: string) {
   return data
 }
 
+export async function register(username: string, password: string, confirmPassword: string) {
+  const data = await post(
+    '/api/auth/register',
+    { username, password, confirmPassword },
+    loginResponseSchema
+  )
+  setSessionId(data.sessionId)
+  return data
+}
+
 export async function logout(): Promise<void> {
   try {
     await post('/api/auth/logout', {}, z.object({ message: z.string() }))

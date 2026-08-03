@@ -7,7 +7,7 @@
   --muted: #f7f7f8;
   --muted-foreground: #6e6e80;
   --border: #e5e5e5;
-  --ring: #10a37f;
+  --ring: #6b6b6b;
 
   /* 侧边栏 — 浅灰底 */
   --sidebar: #f9f9f9;
@@ -17,10 +17,10 @@
   --sidebar-active-foreground: #0d0d0d;
   --sidebar-hover: #f0f0f0;
 
-  /* 交互 — 绿色主色 */
-  --accent: #10a37f;
+  /* 交互 — ChatGPT 式中性主色 */
+  --accent: #111111;
   --accent-foreground: #ffffff;
-  --accent-hover: #0d8f6d;
+  --accent-hover: #2f2f2f;
 
   /* 语义色 */
   --destructive: #ef4444;
@@ -77,7 +77,7 @@
   --muted: #2f2f2f;
   --muted-foreground: #8e8ea0;
   --border: #3e3e3e;
-  --ring: #10a37f;
+  --ring: #a3a3a3;
 
   --sidebar: #171717;
   --sidebar-foreground: #ececec;
@@ -86,9 +86,9 @@
   --sidebar-active-foreground: #ececec;
   --sidebar-hover: #2a2a2a;
 
-  --accent: #10a37f;
-  --accent-foreground: #ffffff;
-  --accent-hover: #0d8f6d;
+  --accent: #ececec;
+  --accent-foreground: #171717;
+  --accent-hover: #ffffff;
 
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;

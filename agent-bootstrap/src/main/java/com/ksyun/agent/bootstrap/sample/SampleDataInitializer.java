@@ -33,12 +33,11 @@ public class SampleDataInitializer {
             Environment environment
     ) {
         return args -> {
-            String adminPassword = environment.getProperty(
-                    "AGENT_SAMPLE_ADMIN_PASSWORD", "admin123");
-            String visitorPassword = environment.getProperty(
-                    "AGENT_SAMPLE_VISITOR_PASSWORD", "visitor123");
+            String adminPassword = environment.getProperty("AGENT_SAMPLE_ADMIN_PASSWORD");
+            String visitorPassword = environment.getProperty("AGENT_SAMPLE_VISITOR_PASSWORD");
 
-            if (!userStore.existsByUsername("admin")) {
+            if (adminPassword != null && !adminPassword.isBlank()
+                    && !userStore.existsByUsername("admin")) {
                 userStore.save(new UserAccount(
                         "admin",
                         "admin",
@@ -47,9 +46,12 @@ public class SampleDataInitializer {
                         true
                 ));
                 log.info("Sample user created: admin (ADMIN)");
+            } else if (adminPassword == null || adminPassword.isBlank()) {
+                log.info("Sample admin user skipped: AGENT_SAMPLE_ADMIN_PASSWORD is not configured");
             }
 
-            if (!userStore.existsByUsername("visitor")) {
+            if (visitorPassword != null && !visitorPassword.isBlank()
+                    && !userStore.existsByUsername("visitor")) {
                 userStore.save(new UserAccount(
                         "visitor",
                         "visitor",
@@ -58,6 +60,8 @@ public class SampleDataInitializer {
                         true
                 ));
                 log.info("Sample user created: visitor (VISITOR)");
+            } else if (visitorPassword == null || visitorPassword.isBlank()) {
+                log.info("Sample visitor user skipped: AGENT_SAMPLE_VISITOR_PASSWORD is not configured");
             }
         };
     }

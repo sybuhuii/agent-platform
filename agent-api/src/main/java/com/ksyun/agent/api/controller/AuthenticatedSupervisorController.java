@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -70,7 +71,7 @@ public class AuthenticatedSupervisorController {
 
         // SUSPENDED 时从 metadata 中提取子 Agent runId
         String approvalRunId = isSuspended && metadata != null
-                ? safeGetString(metadata, "childRunId") : null;
+                ? safeGetString(metadata, "approvalRunId") : null;
         String parentRunId = isSuspended ? runResult.runId() : null;
         boolean isNested = isSuspended;
 

@@ -10,6 +10,7 @@ public final class ReactNodeNames {
     private ReactNodeNames() {
     }
 
+    public static final String PRE_EXECUTION = "pre_execution";
     public static final String REASON = "reason";
     public static final String EXECUTE_TOOLS = "execute_tools";
     public static final String OBSERVE = "observe";

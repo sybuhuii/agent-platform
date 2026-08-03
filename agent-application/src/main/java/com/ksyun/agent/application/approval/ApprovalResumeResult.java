@@ -115,8 +115,8 @@ public record ApprovalResumeResult(
     }
 
     private static String safeGetString(Map<String, Object> map, String key) {
-        if (map == null) return "";
+        if (map == null) return null;
         Object value = map.get(key);
-        return value != null ? String.valueOf(value) : "";
+        return value != null ? String.valueOf(value) : null;
     }
 }

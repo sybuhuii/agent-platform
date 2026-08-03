@@ -12,6 +12,7 @@ import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.core.security.UserSession;
+import com.ksyun.agent.core.approval.HumanApprovalGateway;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -43,10 +44,15 @@ import java.util.Objects;
 public class ApprovalDecisionService {
 
     private final CheckpointStore checkpointStore;
+    private final HumanApprovalGateway humanApprovalGateway;
     private final Clock clock;
 
-    public ApprovalDecisionService(CheckpointStore checkpointStore, Clock clock) {
+    public ApprovalDecisionService(
+            CheckpointStore checkpointStore,
+            HumanApprovalGateway humanApprovalGateway,
+            Clock clock) {
         this.checkpointStore = Objects.requireNonNull(checkpointStore);
+        this.humanApprovalGateway = Objects.requireNonNull(humanApprovalGateway);
         this.clock = Objects.requireNonNull(clock);
     }
 
@@ -154,6 +160,10 @@ public class ApprovalDecisionService {
                     "Checkpoint version conflict during approval decision");
         }
 
+        // Checkpoint 是审批事实的权威来源；CAS 成功后再完成人工响应。
+        // 如果此步临时失败，重复提交相同决定会进入幂等分支并重试。
+        humanApprovalGateway.resume(currentApproval, command.action());
+
         return new ApprovalDecisionResult(
                 checkpoint.runId(),
                 checkpoint.threadId(),
@@ -178,6 +188,7 @@ public class ApprovalDecisionService {
 
         // 相同决定幂等返回
         if (newAction == existingAction) {
+            humanApprovalGateway.resume(currentApproval, newAction);
             return new ApprovalDecisionResult(
                     checkpoint.runId(),
                     checkpoint.threadId(),

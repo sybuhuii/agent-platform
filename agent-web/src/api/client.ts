@@ -56,8 +56,10 @@ async function requestUnknown(url: string, options: RequestOptions = {}): Promis
     ...options.headers
   }
 
-  // 登录接口不附加 X-Session-Id
-  if (!url.includes('/api/auth/login')) {
+  const isPublicAuthRequest = url.includes('/api/auth/login') || url.includes('/api/auth/register')
+
+  // 公开认证接口不附加 X-Session-Id
+  if (!isPublicAuthRequest) {
     const sid = getSessionId()
     if (sid) {
       headers['X-Session-Id'] = sid
@@ -87,8 +89,8 @@ async function requestUnknown(url: string, options: RequestOptions = {}): Promis
 
   // 401: 清除 Session，触发集中回调
   if (response.status === 401) {
-    // 登录接口自身的 401 不触发过期跳转
-    if (!url.includes('/api/auth/login')) {
+    // 公开认证接口自身的 401 不触发过期跳转
+    if (!isPublicAuthRequest) {
       clearSessionId()
       onUnauthorizedHandler?.()
     }
@@ -104,6 +106,9 @@ async function requestUnknown(url: string, options: RequestOptions = {}): Promis
 
   if (!response.ok) {
     const errorData = data as ApiErrorResponse | null
+    if (response.status === 403 && isPublicAuthRequest && errorData === null) {
+      throw new ApiError(403, '当前前端地址未被后端允许，请检查跨域配置')
+    }
     throw fromResponse(response.status, errorData)
   }
 

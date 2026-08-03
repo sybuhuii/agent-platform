@@ -35,6 +35,7 @@ import static org.bsc.langgraph4j.action.AsyncNodeAction.node_async;
 public class ReactAgentGraphFactory {
 
     private final ReactReasonNode reasonNode;
+    private final ReactPreExecutionNode preExecutionNode;
     private final ReactToolExecutionNode toolExecutionNode;
     private final ReactObserveNode observeNode;
     private final ReactCompleteNode completeNode;
@@ -43,8 +44,10 @@ public class ReactAgentGraphFactory {
     private final NodeAction<ReactAgentState> suspendNode;
     private final ReactRouter router;
     private final ReactToolExecutionRouter toolExecutionRouter;
+    private final ReactPreExecutionRouter preExecutionRouter;
 
     public ReactAgentGraphFactory(
+            ReactPreExecutionNode preExecutionNode,
             ReactReasonNode reasonNode,
             ReactToolExecutionNode toolExecutionNode,
             ReactObserveNode observeNode,
@@ -53,8 +56,10 @@ public class ReactAgentGraphFactory {
             ReactFailureNode failureNode,
             NodeAction<ReactAgentState> suspendNode,
             ReactRouter router,
-            ReactToolExecutionRouter toolExecutionRouter
+            ReactToolExecutionRouter toolExecutionRouter,
+            ReactPreExecutionRouter preExecutionRouter
     ) {
+        this.preExecutionNode = preExecutionNode;
         this.reasonNode = reasonNode;
         this.toolExecutionNode = toolExecutionNode;
         this.observeNode = observeNode;
@@ -64,6 +69,7 @@ public class ReactAgentGraphFactory {
         this.suspendNode = suspendNode;
         this.router = router;
         this.toolExecutionRouter = toolExecutionRouter;
+        this.preExecutionRouter = preExecutionRouter;
     }
 
     public CompiledGraph<ReactAgentState> buildGraph() {
@@ -71,6 +77,7 @@ public class ReactAgentGraphFactory {
             StateGraph<ReactAgentState> graph = new StateGraph<>(buildChannels(), ReactAgentState::new);
 
             // 注册节点
+            graph.addNode(PRE_EXECUTION, node_async(preExecutionNode));
             graph.addNode(REASON, node_async(reasonNode));
             graph.addNode(EXECUTE_TOOLS, node_async(toolExecutionNode));
             graph.addNode(OBSERVE, node_async(observeNode));
@@ -80,7 +87,12 @@ public class ReactAgentGraphFactory {
             graph.addNode(SUSPEND, node_async(suspendNode));
 
             // 入口边
-            graph.addEdge(StateGraph.START, REASON);
+            graph.addEdge(StateGraph.START, PRE_EXECUTION);
+            graph.addConditionalEdges(PRE_EXECUTION, edge_async(preExecutionRouter), Map.of(
+                    REASON, REASON,
+                    SUSPEND, SUSPEND,
+                    FAILURE, FAILURE
+            ));
 
             // 条件路由：reason 节点后根据状态决定下一步
             graph.addConditionalEdges(REASON, edge_async(router), Map.of(
@@ -138,6 +150,8 @@ public class ReactAgentGraphFactory {
                 Map.entry(PENDING_APPROVAL, Channels.base((oldVal, newVal) -> newVal)),
                 Map.entry(CHECKPOINT_ID, Channels.base((oldVal, newVal) -> newVal)),
                 Map.entry(RUN_STATUS, Channels.base((oldVal, newVal) -> newVal)),
+                Map.entry(NODE_RESUME_HANDLER_KEY, Channels.base((oldVal, newVal) -> newVal)),
+                Map.entry(NODE_RESUME_DATA, Channels.base((oldVal, newVal) -> newVal)),
                 // Phase7 Batch4 上下文窗口 Channel（覆盖语义）
                 Map.entry(CONTEXT_WINDOW_SNAPSHOT, Channels.base((oldVal, newVal) -> newVal)),
                 Map.entry(LATEST_CONTEXT_TRACE, Channels.base((oldVal, newVal) -> newVal)),
@@ -205,6 +219,30 @@ public class ReactAgentGraphFactory {
                     "Failed to compile ReAct resume graph",
                     e
             );
+        }
+    }
+
+    /**
+     * 编译节点中断的专用续跑图。恢复动作由白名单 Handler 创建，
+     * 图工厂只负责注册原中断节点以及 START/END 边。
+     */
+    public CompiledGraph<ReactAgentState> compileForNodeResume(
+            String nodeName,
+            NodeAction<ReactAgentState> resumeAction) {
+        if (nodeName == null || nodeName.isBlank() || resumeAction == null) {
+            throw new IllegalArgumentException("nodeName and resumeAction must be provided");
+        }
+        try {
+            StateGraph<ReactAgentState> graph = new StateGraph<>(buildChannels(), ReactAgentState::new);
+            graph.addNode(nodeName, node_async(resumeAction));
+            graph.addEdge(StateGraph.START, nodeName);
+            graph.addEdge(nodeName, StateGraph.END);
+            return graph.compile();
+        } catch (GraphStateException e) {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INTERNAL_ERROR,
+                    "Failed to compile node resume graph",
+                    e);
         }
     }
 }

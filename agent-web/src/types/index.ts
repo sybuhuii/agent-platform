@@ -31,6 +31,12 @@ export interface LoginRequest {
   password: string
 }
 
+export interface RegisterRequest {
+  username: string
+  password: string
+  confirmPassword: string
+}
+
 export interface LoginResponse {
   sessionId: string
   username: string
@@ -277,7 +283,7 @@ export interface ApprovalChatMessage {
   operationName: string
   riskLevel: string
   reason: string
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approved' | 'rejected' | 'resolved'
   timestamp: number
 }
 
@@ -326,6 +332,8 @@ export interface Conversation {
   threadId?: string
   /** 会话标题 */
   title: string
+  /** 是否置顶 */
+  pinned: boolean
   /** 该会话的消息列表 */
   messages: ChatMessage[]
   /** 输入草稿 */

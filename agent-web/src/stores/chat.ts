@@ -18,7 +18,15 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { ChatMessage, RunState, Conversation, SystemInitStatus, SupervisorInvokeResponse } from '@/types'
+import type {
+  ApprovalAction,
+  ApprovalResumeResponse,
+  ChatMessage,
+  Conversation,
+  RunState,
+  SupervisorInvokeResponse,
+  SystemInitStatus
+} from '@/types'
 import { uniqueId } from '@/utils'
 import { jsonTransport } from '@/chat/jsonTransport'
 import type { ChatTransport } from '@/chat/chatTransport'
@@ -111,6 +119,7 @@ export const useChatStore = defineStore('chat', () => {
     conversationId: string
     threadId?: string
     title: string
+    pinned?: boolean
     messages: ChatMessage[]
     draft: string
     createdAt: number
@@ -138,6 +147,7 @@ export const useChatStore = defineStore('chat', () => {
           id: msg.id,
           approvalId: msg.approvalId,
           runId: msg.runId,
+          approvalRunId: msg.approvalRunId,
           operationName: msg.operationName,
           riskLevel: msg.riskLevel,
           reason: msg.reason,
@@ -152,6 +162,7 @@ export const useChatStore = defineStore('chat', () => {
       conversationId: conv.conversationId,
       threadId: conv.threadId,
       title: conv.title,
+      pinned: conv.pinned,
       messages: safeMessages,
       draft: conv.draft,
       createdAt: conv.createdAt,
@@ -179,6 +190,7 @@ export const useChatStore = defineStore('chat', () => {
           conversationId: d.conversationId,
           threadId: d.threadId,
           title: d.title,
+          pinned: d.pinned ?? false,
           messages: d.messages,
           draft: d.draft,
           createdAt: d.createdAt,
@@ -317,9 +329,133 @@ export const useChatStore = defineStore('chat', () => {
     saveToStorage()
   }
 
+  function handleApprovalResume(
+      response: ApprovalResumeResponse,
+      approvalMessageId: string,
+      action: ApprovalAction,
+      targetConversationId?: string
+  ): void {
+    const conversationId = targetConversationId ?? activeConversationId.value
+    const conv = conversationId
+      ? conversations.value.find(item => item.conversationId === conversationId) ?? null
+      : null
+    if (!conversationId || !conv) return
+
+    updateMessage(conversationId, approvalMessageId, {
+      status: action === 'APPROVE' ? 'approved' : 'rejected'
+    })
+
+    if (!conv.threadId && response.threadId) {
+      conv.threadId = response.threadId
+    }
+
+    if (response.content.trim()) {
+      addMessage(conversationId, {
+        role: 'assistant',
+        id: uniqueId(),
+        content: response.content,
+        timestamp: Date.now(),
+        runId: response.runId,
+        threadId: response.threadId,
+        success: response.success,
+        errorCode: response.errorCode,
+        evidence: response.evidence,
+        metadata: response.safeMetadata,
+        status: response.status
+      })
+    }
+
+    if (response.status === 'SUSPENDED' && response.approvalId) {
+      const metadata = response.safeMetadata ?? {}
+      addMessage(conversationId, {
+        role: 'approval',
+        id: uniqueId(),
+        approvalId: response.approvalId,
+        runId: response.runId,
+        approvalRunId: response.approvalRunId ?? response.runId,
+        operationName: response.operationName,
+        riskLevel: response.riskLevel,
+        reason: String(metadata.reason ?? '该操作需要人工确认'),
+        status: 'pending',
+        timestamp: Date.now()
+      })
+      runState.value = { status: 'suspended', runId: response.runId }
+    } else if (response.status === 'COMPLETED') {
+      runState.value = { status: 'completed', runId: response.runId }
+    } else if (response.status === 'FAILED') {
+      runState.value = {
+        status: 'failed',
+        runId: response.runId,
+        errorCode: response.errorCode,
+        message: response.content || '恢复执行失败'
+      }
+    } else {
+      runState.value = { status: 'running', runId: response.runId }
+    }
+
+    conv.lastMessageAt = Date.now()
+    saveToStorage()
+  }
+
+  /**
+   * 将待审批页面完成的审批结果同步回对应会话。
+   * approvalId 由后端生成，能够跨页面稳定定位原审批消息。
+   */
+  function handleExternalApprovalResume(
+      response: ApprovalResumeResponse,
+      approvalId: string,
+      action: ApprovalAction
+  ): string | null {
+    for (const conversation of conversations.value) {
+      const approvalMessage = conversation.messages.find(message =>
+        message.role === 'approval' &&
+        message.status === 'pending' &&
+        message.approvalId === approvalId
+      )
+
+      if (approvalMessage?.role === 'approval') {
+        handleApprovalResume(
+            response,
+            approvalMessage.id,
+            action,
+            conversation.conversationId
+        )
+        return conversation.conversationId
+      }
+    }
+    return null
+  }
+
+  /** 后端已不存在待审批检查点时，收敛浏览器中的陈旧审批状态。 */
+  function markApprovalResolved(approvalId: string): void {
+    for (const conversation of conversations.value) {
+      const approvalMessage = conversation.messages.find(message =>
+        message.role === 'approval' &&
+        message.status === 'pending' &&
+        message.approvalId === approvalId
+      )
+
+      if (approvalMessage?.role === 'approval') {
+        approvalMessage.status = 'resolved'
+        conversation.lastMessageAt = Date.now()
+        if (conversation.conversationId === activeConversationId.value) {
+          runState.value = { status: 'idle' }
+        }
+        saveToStorage()
+        return
+      }
+    }
+  }
+
   /** 发送用户消息并调用后端 */
   async function sendMessage(content: string): Promise<void> {
-    if (!content.trim() || isRunning.value || !_supervisorName.value || !activeConversationId.value) return
+    if (!content.trim() || isRunning.value || !_supervisorName.value) return
+
+    if (!activeConversationId.value) {
+      newConversation()
+    }
+
+    if (!activeConversationId.value) return
 
     const targetConvId = activeConversationId.value
     const requestId = uniqueId()
@@ -413,6 +549,7 @@ export const useChatStore = defineStore('chat', () => {
       conversationId: convId,
       threadId: undefined,
       title: '新对话',
+      pinned: false,
       messages: [],
       draft: '',
       createdAt: Date.now(),
@@ -444,6 +581,32 @@ export const useChatStore = defineStore('chat', () => {
     saveToStorage()
   }
 
+  /** 重命名会话；空标题不覆盖现有标题。 */
+  function renameConversation(conversationId: string, title: string): boolean {
+    const normalizedTitle = title.trim().slice(0, 80)
+    if (!normalizedTitle) return false
+
+    const conversation = conversations.value.find(
+      item => item.conversationId === conversationId
+    )
+    if (!conversation) return false
+
+    conversation.title = normalizedTitle
+    saveToStorage()
+    return true
+  }
+
+  /** 设置会话置顶状态。 */
+  function setConversationPinned(conversationId: string, pinned: boolean): void {
+    const conversation = conversations.value.find(
+      item => item.conversationId === conversationId
+    )
+    if (!conversation || conversation.pinned === pinned) return
+
+    conversation.pinned = pinned
+    saveToStorage()
+  }
+
   /** 保持向后兼容：switchThread */
   function switchThread(threadId: string): void {
     const conv = conversations.value.find(c => c.threadId === threadId)
@@ -457,6 +620,11 @@ export const useChatStore = defineStore('chat', () => {
     const idx = conversations.value.findIndex(c => c.conversationId === conversationId)
     if (idx < 0) return
 
+    if (activeRequest?.conversationId === conversationId) {
+      activeRequest.controller.abort()
+      activeRequest = null
+    }
+
     conversations.value.splice(idx, 1)
 
     // 如果删除的是当前会话，切换到最近的或创建新的
@@ -464,8 +632,9 @@ export const useChatStore = defineStore('chat', () => {
       if (conversations.value.length > 0) {
         activeConversationId.value = conversations.value[0]!.conversationId
       } else {
-        newConversation()
+        activeConversationId.value = null
       }
+      runState.value = { status: 'idle' }
     }
 
     saveToStorage()
@@ -492,6 +661,7 @@ export const useChatStore = defineStore('chat', () => {
       conversationId: convId,
       threadId: undefined,
       title: '新对话',
+      pinned: false,
       messages: [],
       draft: '',
       createdAt: Date.now(),
@@ -527,10 +697,15 @@ export const useChatStore = defineStore('chat', () => {
         updateMessage(activeConversationId.value, id, patch)
       }
     },
+    handleApprovalResume,
+    handleExternalApprovalResume,
+    markApprovalResolved,
     sendMessage,
     cancelRequest,
     newConversation,
     switchConversation,
+    renameConversation,
+    setConversationPinned,
     switchThread,
     deleteConversation,
     clearAllConversations

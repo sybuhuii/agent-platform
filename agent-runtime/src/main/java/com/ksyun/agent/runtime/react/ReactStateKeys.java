@@ -54,6 +54,9 @@ public final class ReactStateKeys {
     // ---- 新增 Key（Phase8 Batch5 长期记忆上下文）----
     public static final String LATEST_MEMORY_CONTEXT_TRACE = "latestMemoryContextTrace";
 
+    public static final String NODE_RESUME_HANDLER_KEY = "nodeResumeHandlerKey";
+    public static final String NODE_RESUME_DATA = "nodeResumeData";
+
     // ---- 类型安全读取方法 ----
 
     public static AgentDefinition getAgentDefinition(AgentState state) {

@@ -5,9 +5,9 @@
  * - 工具调用、审批、错误使用专属卡片
  */
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { ChatMessage, UserChatMessage, AssistantChatMessage, ErrorChatMessage, ApprovalChatMessage, ToolResultChatMessage } from '@/types'
-import { Bot } from '@lucide/vue'
+import { Bot, Check, Copy } from '@lucide/vue'
 import MarkdownContent from './MarkdownContent.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import ApprovalCard from './ApprovalCard.vue'
@@ -15,6 +15,8 @@ import ApprovalCard from './ApprovalCard.vue'
 const props = defineProps<{
   message: ChatMessage
 }>()
+
+const copied = ref(false)
 
 const isUser = computed(() => props.message.role === 'user')
 const isAssistant = computed(() => props.message.role === 'assistant')
@@ -26,6 +28,11 @@ const isError = computed(() => props.message.role === 'error')
 const assistantMsg = computed<AssistantChatMessage | null>(() =>
   isAssistant.value ? props.message as AssistantChatMessage : null
 )
+
+const visibleAssistantErrorCode = computed(() => {
+  const errorCode = assistantMsg.value?.errorCode
+  return errorCode && errorCode !== 'APPROVAL_REQUIRED' ? errorCode : ''
+})
 
 const userMsg = computed<UserChatMessage | null>(() =>
   isUser.value ? props.message as UserChatMessage : null
@@ -46,33 +53,54 @@ const toolResultMsg = computed<ToolResultChatMessage | null>(() =>
 function runStatusLabel(status?: string): string {
   switch (status) {
     case 'SUSPENDED': return '等待审批'
-    case 'COMPLETED': return '已完成'
+    case 'COMPLETED': return ''
     case 'FAILED': return '执行失败'
     case 'RUNNING': return '运行中'
     case 'INTERRUPTED': return '已中断'
     default: return ''
   }
 }
+
+function formatTime(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(new Date(timestamp))
+}
+
+async function copyAssistantContent(): Promise<void> {
+  if (!assistantMsg.value?.content || !navigator.clipboard) return
+  await navigator.clipboard.writeText(assistantMsg.value.content)
+  copied.value = true
+  window.setTimeout(() => { copied.value = false }, 1600)
+}
+
 </script>
 
 <template>
   <!-- 用户消息 — 右侧灰色气泡 -->
-  <div v-if="isUser" class="flex justify-end mb-4">
-    <div class="max-w-[85%] rounded-2xl bg-[var(--user-bubble)] text-[var(--user-bubble-foreground)] px-4 py-3 text-[0.9375rem] leading-relaxed">
-      {{ userMsg!.content }}
+  <div v-if="isUser" class="chat-message chat-message-user">
+    <div class="chat-user-message">
+      <div class="chat-user-bubble">
+        {{ userMsg!.content }}
+      </div>
+      <time class="chat-message-time" :datetime="new Date(userMsg!.timestamp).toISOString()">
+        {{ formatTime(userMsg!.timestamp) }}
+      </time>
     </div>
   </div>
 
   <!-- 助手消息 — 左侧头像 + 内容 -->
-  <div v-else-if="isAssistant" class="mb-4">
-    <div class="flex items-start gap-4">
+  <div v-else-if="isAssistant" class="chat-message chat-message-assistant">
+    <div class="chat-assistant-row">
       <!-- 头像 -->
-      <div class="w-7 h-7 rounded-full bg-[var(--accent)] flex items-center justify-center shrink-0 mt-1">
-        <Bot class="w-4 h-4 text-[var(--accent-foreground)]" aria-hidden="true" />
+      <div class="agent-avatar" title="Agent 回复">
+        <Bot class="w-4 h-4 text-[var(--background)]" aria-hidden="true" />
       </div>
       <!-- 内容 -->
-      <div class="flex-1 min-w-0">
-        <div v-if="assistantMsg!.status" class="text-xs text-[var(--muted-foreground)] mb-1.5">
+      <div class="agent-response">
+        <div v-if="runStatusLabel(assistantMsg!.status)" class="text-xs text-[var(--muted-foreground)] mb-1.5">
           {{ runStatusLabel(assistantMsg!.status) }}
         </div>
         <div v-if="assistantMsg!.content" class="text-[0.9375rem] leading-relaxed">
@@ -85,9 +113,16 @@ function runStatusLabel(status?: string): string {
             <span class="w-1.5 h-1.5 rounded-full bg-[var(--muted-foreground)] animate-bounce" style="animation-delay: 300ms" />
           </div>
         </div>
-        <div v-if="assistantMsg!.errorCode" class="mt-2 text-sm text-[var(--destructive)]">
-          错误码：{{ assistantMsg!.errorCode }}
+        <div v-if="visibleAssistantErrorCode" class="mt-2 text-sm text-[var(--destructive)]">
+          错误码：{{ visibleAssistantErrorCode }}
         </div>
+        <time
+          v-if="assistantMsg!.content"
+          class="chat-message-time mt-1 inline-block"
+          :datetime="new Date(assistantMsg!.timestamp).toISOString()"
+        >
+          {{ formatTime(assistantMsg!.timestamp) }}
+        </time>
         <details v-if="assistantMsg!.evidence && assistantMsg!.evidence.length > 0" class="mt-2">
           <summary class="cursor-pointer text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
             证据 ({{ assistantMsg!.evidence!.length }})
@@ -96,6 +131,13 @@ function runStatusLabel(status?: string): string {
             <li v-for="(e, i) in assistantMsg!.evidence" :key="i">{{ e }}</li>
           </ul>
         </details>
+
+        <div v-if="assistantMsg!.content" class="message-actions" aria-label="回复操作">
+          <button :aria-label="copied ? '已复制' : '复制回复'" :title="copied ? '已复制' : '复制'" @click="copyAssistantContent">
+            <Check v-if="copied" class="h-4 w-4" />
+            <Copy v-else class="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -120,8 +162,15 @@ function runStatusLabel(status?: string): string {
   </div>
 
   <!-- 审批卡片 -->
-  <div v-else-if="isApproval" class="mb-3">
-    <ApprovalCard :message="approvalMsg!" />
+  <div v-else-if="isApproval" class="chat-message chat-message-approval">
+    <div class="chat-assistant-row">
+      <div class="agent-avatar" title="Agent 审批请求">
+        <Bot class="w-4 h-4 text-[var(--background)]" aria-hidden="true" />
+      </div>
+      <div class="min-w-0 flex-1">
+        <ApprovalCard :message="approvalMsg!" />
+      </div>
+    </div>
   </div>
 
   <!-- 错误消息 -->

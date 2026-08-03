@@ -1,6 +1,6 @@
 /**
  * 主布局组件 — 侧边栏 + 主内容区。
- * - 桌面端：侧边栏固定在左侧 (~260px)
+ * - 桌面端：侧边栏固定在左侧（300px）
  * - 移动端：使用 Reka UI Sheet 抽屉（支持 Esc、焦点锁定、遮罩）
  */
 <script setup lang="ts">
@@ -38,7 +38,7 @@ const showDesktopSidebar = computed(() => !isMobile.value && sidebarStore.open)
     <!-- 桌面端侧边栏 -->
     <div
       v-if="showDesktopSidebar"
-      class="w-[260px] shrink-0"
+      class="w-[300px] shrink-0 border-r border-[var(--sidebar-border)]"
     >
       <Sidebar />
     </div>
@@ -54,11 +54,11 @@ const showDesktopSidebar = computed(() => !isMobile.value && sidebarStore.open)
     </Sheet>
 
     <!-- 主内容 -->
-    <div class="flex-1 flex flex-col min-w-0 relative">
+    <div class="flex-1 flex flex-col min-w-0 relative bg-[var(--background)]">
       <!-- 桌面端侧边栏切换按钮 -->
       <button
         v-if="!isMobile && !sidebarStore.open"
-        class="absolute top-3 left-3 z-20 inline-flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        class="absolute top-2.5 left-3 z-30 inline-flex items-center justify-center w-10 h-10 rounded-xl hover:bg-[var(--muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
         aria-label="打开侧边栏"
         @click="sidebarStore.toggle()"
       >
@@ -74,7 +74,7 @@ const showDesktopSidebar = computed(() => !isMobile.value && sidebarStore.open)
         >
           <Menu class="w-5 h-5" />
         </button>
-        <span class="ml-2 text-sm font-semibold">智能协作</span>
+        <span class="ml-2 text-sm font-semibold">智能协作平台</span>
       </div>
 
       <!-- 页面内容 -->

@@ -18,7 +18,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -35,7 +37,7 @@ import static com.ksyun.agent.runtime.supervisor.SupervisorStateKeys.*;
  * 3. 调用 ReactResumeEngine 恢复每个暂停子 Agent
  * 4. 更新 dispatchTasks 中对应子任务的状态
  * 5. 编译恢复图，从 DISPATCH_AGENTS 节点继续执行
- * 6. 处理父 Checkpoint 生命周期
+     * 6. 失败时处理父 Checkpoint 生命周期；成功清理由应用层在线程状态保存后完成
  * <p>
  * 约束：
  * - 不在共享图实例中保存请求 State
@@ -102,16 +104,13 @@ public class SupervisorResumeEngine {
         log.info("Resuming Supervisor execution: parentRunId={}, checkpointId={}, version={}",
                 parentRunId, resumingCheckpoint.checkpointId(), resumingCheckpoint.version());
 
-        // 2. 从父 Checkpoint 恢复 SupervisorAgentState
-        SupervisorAgentState resumeState = stateMapper.fromCheckpointForResume(resumingCheckpoint);
-
-        // 3-5. 恢复暂停子 Agent 并更新 dispatchTasks
-        resumeSuspendedChildren(resumeState, operator);
-
-        // 6. 编译恢复图并执行
+        // 2-6. 状态重建、子 Agent 恢复和父图执行统一纳入失败生命周期
         AgentResult finalResult;
         SupervisorAgentState finalState;
         try {
+            SupervisorAgentState resumeState = stateMapper.fromCheckpointForResume(resumingCheckpoint);
+            resumeState = resumeSuspendedChildren(resumeState, operator);
+
             CompiledGraph<SupervisorAgentState> resumeGraph = graphFactory.buildResumeGraph();
 
             finalState = resumeGraph.invoke(resumeState.data())
@@ -145,7 +144,7 @@ public class SupervisorResumeEngine {
                     "Supervisor resume execution failed", e);
         }
 
-        // 7. 处理 Checkpoint 生命周期
+        // 7. 失败生命周期由引擎处理；成功清理由应用层在 THREAD_MEMORY 保存后处理
         handleCheckpointLifecycle(finalResult, resumingCheckpoint);
 
         // 8. 判断是否可提取稳定线程状态
@@ -177,12 +176,16 @@ public class SupervisorResumeEngine {
      * 2. 根据子 Agent 恢复结果更新 dispatchTasks 中的状态
      * 3. 更新 SUSPENDED_CHILDREN
      */
-    private void resumeSuspendedChildren(SupervisorAgentState state, UserSession operator) {
-        List<SupervisorChildExecution> dispatchTasks = getDispatchTasks(state);
+    private SupervisorAgentState resumeSuspendedChildren(
+            SupervisorAgentState state,
+            UserSession operator) {
+        // Checkpoint 中保存的是不可变快照；恢复过程使用请求私有的可变副本。
+        List<SupervisorChildExecution> dispatchTasks =
+                new java.util.ArrayList<>(getDispatchTasks(state));
         List<SupervisorChildExecution> suspendedChildren = getSuspendedChildren(state);
 
         if (suspendedChildren.isEmpty()) {
-            return;
+            return state;
         }
 
         // 对每个 SUSPENDED 子任务调用 ReactResumeEngine
@@ -210,9 +213,15 @@ public class SupervisorResumeEngine {
             }
         }
 
-        // 清空 SUSPENDED_CHILDREN（所有子任务已恢复）
-        // dispatchTasks 中的更新通过 Channel 覆盖语义传播
-        state.data().put(SUSPENDED_CHILDREN, List.of());
+        // 写回更新后的不可变快照；子 Agent 再次挂起时继续保留审批状态。
+        List<SupervisorChildExecution> remainingSuspended = dispatchTasks.stream()
+                .filter(execution -> execution.status()
+                        == SupervisorChildExecutionStatus.SUSPENDED)
+                .toList();
+        Map<String, Object> resumedStateData = new HashMap<>(state.data());
+        resumedStateData.put(DISPATCH_TASKS, List.copyOf(dispatchTasks));
+        resumedStateData.put(SUSPENDED_CHILDREN, List.copyOf(remainingSuspended));
+        return new SupervisorAgentState(resumedStateData);
     }
 
     /**
@@ -257,18 +266,12 @@ public class SupervisorResumeEngine {
     /**
      * 处理父 Checkpoint 生命周期。
      * <p>
-     * COMPLETED：标记完成并清理
+     * COMPLETED：保持 RESUMING，交由应用层在线程状态保存成功后精确清理
      * FAILED：标记失败
      * SUSPENDED：由 Dispatch 保存新 Checkpoint 处理
      */
     private void handleCheckpointLifecycle(AgentResult finalResult, AgentCheckpoint resumingCheckpoint) {
-        if (finalResult.status() == RunStatus.COMPLETED) {
-            try {
-                checkpointService.complete(resumingCheckpoint);
-            } catch (AgentFrameworkException e) {
-                log.warn("Supervisor checkpoint complete conflicted: runId={}", resumingCheckpoint.runId());
-            }
-        } else if (finalResult.status() == RunStatus.FAILED) {
+        if (finalResult.status() == RunStatus.FAILED) {
             try {
                 checkpointService.fail(resumingCheckpoint, AgentErrorCode.RESUME_FAILED);
             } catch (AgentFrameworkException e) {

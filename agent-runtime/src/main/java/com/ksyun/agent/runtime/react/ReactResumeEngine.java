@@ -2,6 +2,7 @@ package com.ksyun.agent.runtime.react;
 
 import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.approval.ApprovalDecision;
+import com.ksyun.agent.core.approval.OperationType;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
@@ -13,6 +14,8 @@ import com.ksyun.agent.runtime.react.checkpoint.CheckpointResumeCoordinator;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointLifecycleService;
 import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointStateMapper;
 import com.ksyun.agent.runtime.react.checkpoint.ReactResumeValidator;
+import com.ksyun.agent.runtime.hitl.node.NodeResumeHandlerRegistry;
+import com.ksyun.agent.runtime.hitl.node.NodeResumeValidator;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +68,8 @@ public class ReactResumeEngine {
     private final CheckpointResumeCoordinator resumeCoordinator;
     private final ReactCheckpointStateMapper stateMapper;
     private final ReactResumeValidator resumeValidator;
+    private final NodeResumeValidator nodeResumeValidator;
+    private final NodeResumeHandlerRegistry nodeResumeHandlerRegistry;
     private final ReactCheckpointLifecycleService lifecycleService;
     private final ReactAgentGraphFactory graphFactory;
     private final ReactThreadConversationStateMapper threadStateMapper;
@@ -75,6 +80,8 @@ public class ReactResumeEngine {
             CheckpointResumeCoordinator resumeCoordinator,
             ReactCheckpointStateMapper stateMapper,
             ReactResumeValidator resumeValidator,
+            NodeResumeValidator nodeResumeValidator,
+            NodeResumeHandlerRegistry nodeResumeHandlerRegistry,
             ReactCheckpointLifecycleService lifecycleService,
             ReactAgentGraphFactory graphFactory,
             ReactThreadConversationStateMapper threadStateMapper,
@@ -83,6 +90,8 @@ public class ReactResumeEngine {
         this.resumeCoordinator = Objects.requireNonNull(resumeCoordinator);
         this.stateMapper = Objects.requireNonNull(stateMapper);
         this.resumeValidator = Objects.requireNonNull(resumeValidator);
+        this.nodeResumeValidator = Objects.requireNonNull(nodeResumeValidator);
+        this.nodeResumeHandlerRegistry = Objects.requireNonNull(nodeResumeHandlerRegistry);
         this.lifecycleService = Objects.requireNonNull(lifecycleService);
         this.graphFactory = Objects.requireNonNull(graphFactory);
         this.threadStateMapper = Objects.requireNonNull(threadStateMapper);
@@ -143,7 +152,19 @@ public class ReactResumeEngine {
 
         // 1. 抢占前：先加载 Checkpoint 做完整 Validator 校验
         AgentCheckpoint preCheckCp = resumeCoordinator.loadForValidation(runId);
-        resumeValidator.validateForResume(preCheckCp, operator, runId);
+        OperationType operationType = preCheckCp.pendingApproval() == null
+                ? null
+                : preCheckCp.pendingApproval().payload().operationType();
+        if (operationType == OperationType.TOOL) {
+            resumeValidator.validateForResume(preCheckCp, operator, runId);
+        } else if (operationType == OperationType.NODE) {
+            nodeResumeValidator.validate(preCheckCp, operator, runId);
+            nodeResumeHandlerRegistry.validate(preCheckCp);
+        } else {
+            throw new AgentFrameworkException(
+                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "Checkpoint approval operation type is not resumable");
+        }
 
         // 2. 原子抢占 SUSPENDED → RESUMING
         AgentCheckpoint resumingCheckpoint = resumeCoordinator.acquireForResume(runId, operator);
@@ -166,7 +187,9 @@ public class ReactResumeEngine {
             ReactAgentState resumeState = stateMapper.fromCheckpointForResume(resumingCheckpoint);
 
             // 3b. 每次独立编译恢复图
-            CompiledGraph<ReactAgentState> resumeGraph = graphFactory.compileForResume();
+            CompiledGraph<ReactAgentState> resumeGraph = operationType == OperationType.NODE
+                    ? nodeResumeHandlerRegistry.compileResumeGraph(resumingCheckpoint)
+                    : graphFactory.compileForResume();
 
             // 3c. 调用恢复图
             finalState = resumeGraph.invoke(resumeState.data())

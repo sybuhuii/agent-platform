@@ -23,28 +23,24 @@ public class InMemoryUserStore implements UserStore {
 
     private final ConcurrentHashMap<String, UserAccount> byId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> usernameToId = new ConcurrentHashMap<>();
+    private final Object writeLock = new Object();
 
     @Override
     public void save(UserAccount user) {
         Objects.requireNonNull(user, "UserAccount must not be null");
 
-        // 使用 userId 作为锁对象保证双索引原子性
-        synchronized (user.userId().intern()) {
-            // 检查用户名唯一性：用户名已被其他 userId 占用
-            String existingIdForUsername = usernameToId.get(user.username());
-            if (existingIdForUsername != null && !existingIdForUsername.equals(user.userId())) {
+        synchronized (writeLock) {
+            if (usernameToId.containsKey(user.username())) {
                 throw new AgentFrameworkException(
-                        AgentErrorCode.INVALID_ARGUMENT,
-                        "Username already bound to a different userId: " + user.username()
+                        AgentErrorCode.USER_ALREADY_EXISTS,
+                        "Username is already in use"
                 );
             }
 
-            // 检查 userId 是否已存在且绑定了不同用户名
-            UserAccount existing = byId.get(user.userId());
-            if (existing != null && !existing.username().equals(user.username())) {
+            if (byId.containsKey(user.userId())) {
                 throw new AgentFrameworkException(
                         AgentErrorCode.INVALID_ARGUMENT,
-                        "UserId already bound to a different username: " + user.userId()
+                        "UserId already exists"
                 );
             }
 

@@ -46,8 +46,8 @@ public class InMemoryDemoRecordStore implements DemoRecordStore {
 
         Map<String, Object> removed = records.remove(recordId);
         if (removed == null) {
-            // 重复删除幂等：记录已不存在，返回成功并标记 alreadyAbsent
-            return new DeleteResult(true,
+            // 重复删除幂等：记录已不存在，deleted=false 供工具标记 alreadyAbsent
+            return new DeleteResult(false,
                     "Record '" + recordId + "' already absent (idempotent)");
         }
 
