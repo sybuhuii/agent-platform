@@ -19,10 +19,13 @@ import java.util.List;
 @ConfigurationProperties(prefix = "agent.memory")
 public class MemoryProperties {
 
+    /** 允许的后端白名单 */
+    private static final java.util.Set<String> ALLOWED_BACKENDS = java.util.Set.of("in-memory", "postgresql");
+
     /** 长期记忆是否启用 */
     private boolean enabled = true;
 
-    /** 存储后端，本批只支持 in-memory */
+    /** 存储后端：in-memory 或 postgresql */
     private String backend = "in-memory";
 
     /** 默认命名空间 */
@@ -69,11 +72,12 @@ public class MemoryProperties {
             throw new IllegalArgumentException(
                     "agent.memory.backend must not be blank");
         }
-        if (!"in-memory".equals(backend.trim())) {
+        String trimmed = backend.trim();
+        if (!ALLOWED_BACKENDS.contains(trimmed)) {
             throw new IllegalArgumentException(
-                    "agent.memory.backend only supports 'in-memory', got: " + backend);
+                    "agent.memory.backend only supports 'in-memory' or 'postgresql', got: " + backend);
         }
-        this.backend = backend.trim();
+        this.backend = trimmed;
     }
 
     public String getDefaultNamespace() {

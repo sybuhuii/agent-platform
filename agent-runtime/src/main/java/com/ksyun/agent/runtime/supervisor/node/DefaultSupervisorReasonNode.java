@@ -198,8 +198,9 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
         try {
             draft = decisionParser.parse(content);
         } catch (AgentFrameworkException e) {
-            log.error("SupervisorReason decision parse failed: runId={}, supervisor={}, iteration={}",
-                    runContext.runId(), definition.name(), iteration);
+            log.error("SupervisorReason decision parse failed: runId={}, supervisor={}, iteration={}, rawContent={}",
+                    runContext.runId(), definition.name(), iteration,
+                    content.length() <= 2000 ? content : content.substring(0, 2000) + "...[truncated]");
             Map<String, Object> result = new java.util.HashMap<>();
             result.put(SUPERVISOR_MESSAGES, newMessages);
             result.put(ITERATION, newIteration);

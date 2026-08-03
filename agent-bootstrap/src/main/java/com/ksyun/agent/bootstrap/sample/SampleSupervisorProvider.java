@@ -60,8 +60,15 @@ public class SampleSupervisorProvider implements SupervisorProvider {
                         + "不得输出Markdown、代码围栏或JSON以外内容。\n"
                         + "不得输出详细思维链，只输出简洁decisionSummary。\n"
                         + "不得选择memberAgents之外的Agent。\n"
-                        + "不得把子Agent当作工具调用。",
-                Set.of("utility_agent", "calculator_agent", "approval_demo_agent", "node_approval_demo_agent"),
+                        + "不得把子Agent当作工具调用。"
+                +"当用户明确表达长期偏好、个人背景、长期事实或长期规则时，\n" +
+                        "必须分派 memory_demo_agent 保存，不得直接返回 FINISH。\n" +
+                        "\n" +
+                        "传递给 memory_demo_agent 的任务必须保留用户明确表达的信息，\n" +
+                        "不得自行推断或扩展。\n" +
+                        "\n" +
+                        "收到 memory_demo_agent 的真实执行结果后再向用户确认。",
+                Set.of("utility_agent", "calculator_agent", "approval_demo_agent", "node_approval_demo_agent","memory_demo_agent"),
                 5
         );
     }

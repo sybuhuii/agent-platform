@@ -102,7 +102,7 @@ import java.util.Optional;
  * - Terminal: （最终执行）
  */
 @AutoConfiguration
-@EnableConfigurationProperties({ContextProperties.class, MemoryProperties.class})
+@EnableConfigurationProperties({ContextProperties.class, MemoryProperties.class, PersistenceProperties.class})
 public class AgentFrameworkAutoConfiguration {
 
     // --- 第一阶段已有 Bean ---

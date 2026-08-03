@@ -5,6 +5,15 @@ spring:
   application:
     name: agent-platform
 
+  # 排除 Spring Boot 默认 DataSource/Flyway 自动配置。
+  # 默认 in-memory 模式不需要数据库，排除可防止 "url not specified" 启动失败。
+  # PostgreSQL 模式下由 PostgreSQLAutoConfiguration 提供等价功能。
+  # 用户可通过 --spring.autoconfigure.exclude= 覆盖此项。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+
   ai:
     model:
       chat: openai
@@ -17,6 +26,13 @@ spring:
           model: ${MODEL_NAME:deepseek-v4-flash}
 
 agent:
+  persistence:
+    backend: ${AGENT_PERSISTENCE_BACKEND:in-memory}
+    postgresql:
+      url: ${DB_URL:}
+      username: ${DB_USERNAME:}
+      password: ${DB_PASSWORD:}
+
   model:
     enabled: ${AGENT_MODEL_ENABLED:true}
 
