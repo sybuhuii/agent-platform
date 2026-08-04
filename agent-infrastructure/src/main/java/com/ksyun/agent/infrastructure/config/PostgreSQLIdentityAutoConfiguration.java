@@ -8,6 +8,7 @@ import com.ksyun.agent.infrastructure.store.PostgresSessionStore;
 import com.ksyun.agent.infrastructure.store.PostgresUserStore;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,6 +30,7 @@ import org.springframework.transaction.PlatformTransactionManager;
  */
 @AutoConfiguration(after = PostgreSQLAutoConfiguration.class, before = SecurityConfiguration.class)
 @ConditionalOnProperty(name = "agent.persistence.backend", havingValue = "postgresql")
+@ConditionalOnExpression("${agent.auth.enabled:true}")
 public class PostgreSQLIdentityAutoConfiguration {
 
     @Bean

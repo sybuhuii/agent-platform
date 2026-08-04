@@ -4,6 +4,7 @@ import com.ksyun.agent.core.sanitizer.SensitiveValueSanitizer;
 import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.core.store.ToolAuditStore;
 import com.ksyun.agent.infrastructure.checkpoint.CheckpointPayloadCodec;
+import com.ksyun.agent.core.approval.NodeResumeDataCodec;
 import com.ksyun.agent.infrastructure.store.PostgresCheckpointStore;
 import com.ksyun.agent.infrastructure.store.PostgresToolAuditStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+
+import java.util.List;
 
 /**
  * PostgreSQL Checkpoint 和工具审计自动配置。
@@ -33,8 +36,9 @@ public class PostgreSQLCheckpointAuditAutoConfiguration {
     @ConditionalOnMissingBean(CheckpointPayloadCodec.class)
     public CheckpointPayloadCodec checkpointPayloadCodec(
             ObjectMapper objectMapper,
-            SensitiveValueSanitizer sanitizer) {
-        return new CheckpointPayloadCodec(objectMapper, sanitizer);
+            SensitiveValueSanitizer sanitizer,
+            List<NodeResumeDataCodec<?>> resumeDataCodecs) {
+        return new CheckpointPayloadCodec(objectMapper, sanitizer, resumeDataCodecs);
     }
 
     @Bean

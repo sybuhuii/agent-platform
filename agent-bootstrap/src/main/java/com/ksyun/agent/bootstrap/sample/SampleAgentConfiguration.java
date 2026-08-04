@@ -9,6 +9,8 @@ import com.ksyun.agent.bootstrap.sample.tool.DeleteDemoRecordTool;
 import com.ksyun.agent.bootstrap.sample.tool.ListDemoRecordsTool;
 import com.ksyun.agent.bootstrap.sample.node.SampleNodeApprovalNode;
 import com.ksyun.agent.bootstrap.sample.node.SampleNodeResumeHandler;
+import com.ksyun.agent.bootstrap.sample.node.SampleNodeResumeDataCodec;
+import com.ksyun.agent.core.approval.NodeResumeDataCodec;
 import com.ksyun.agent.infrastructure.sample.InMemoryDemoRecordStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.ObjectProvider;
@@ -71,5 +73,10 @@ public class SampleAgentConfiguration {
     public SampleNodeResumeHandler sampleNodeResumeHandler(
             ObjectProvider<ReactAgentGraphFactory> graphFactoryProvider) {
         return new SampleNodeResumeHandler(graphFactoryProvider::getObject);
+    }
+
+    @Bean
+    public NodeResumeDataCodec<?> sampleNodeResumeDataCodec() {
+        return new SampleNodeResumeDataCodec();
     }
 }

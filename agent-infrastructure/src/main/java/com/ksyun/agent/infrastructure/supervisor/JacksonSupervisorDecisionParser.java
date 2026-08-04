@@ -60,7 +60,7 @@ public class JacksonSupervisorDecisionParser implements SupervisorDecisionParser
         try {
             root = objectMapper.readTree(json);
         } catch (Exception e) {
-            log.warn("SupervisorDecisionParser: JSON parse error, rawContent={}", truncate(content));
+            log.warn("SupervisorDecisionParser: JSON parse error");
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
                     "Supervisor model returned invalid JSON"
@@ -68,7 +68,7 @@ public class JacksonSupervisorDecisionParser implements SupervisorDecisionParser
         }
 
         if (root == null || !root.isObject()) {
-            log.warn("SupervisorDecisionParser: root is not a JSON object, rawContent={}", truncate(content));
+            log.warn("SupervisorDecisionParser: root is not a JSON object");
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
                     "Supervisor model returned non-object JSON"
@@ -93,7 +93,7 @@ public class JacksonSupervisorDecisionParser implements SupervisorDecisionParser
     private SupervisorAction parseAction(JsonNode root) {
         JsonNode actionNode = root.get("action");
         if (actionNode == null || !actionNode.isTextual()) {
-            log.warn("SupervisorDecisionParser: missing or invalid 'action' field, rawContent={}", truncate(root.toString()));
+            log.warn("SupervisorDecisionParser: missing or invalid 'action' field");
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
                     "Supervisor model response missing or invalid 'action' field"
@@ -102,7 +102,7 @@ public class JacksonSupervisorDecisionParser implements SupervisorDecisionParser
         try {
             return SupervisorAction.valueOf(actionNode.asText());
         } catch (IllegalArgumentException e) {
-            log.warn("SupervisorDecisionParser: unknown action '{}', rawContent={}", actionNode.asText(), truncate(root.toString()));
+            log.warn("SupervisorDecisionParser: unknown action discriminator");
             throw new AgentFrameworkException(
                     AgentErrorCode.MODEL_INVOCATION_FAILED,
                     "Supervisor model returned unknown action: " + actionNode.asText()
@@ -166,23 +166,11 @@ public class JacksonSupervisorDecisionParser implements SupervisorDecisionParser
     }
 
     /**
-     * 截断过长内容用于日志输出，避免日志爆炸。
-     */
-    private String truncate(String content) {
-        if (content == null) {
-            return "null";
-        }
-        if (content.length() <= 2000) {
-            return content;
-        }
-        return content.substring(0, 2000) + "...[truncated, total=" + content.length() + "]";
-    }
-
-    /**
      * 去除一层完整的 ```json 代码围栏。
      * 不得从任意自然语言中正则提取 JSON 片段。
      */
-    private String stripCodeFence(String content) {        String trimmed = content.trim();
+    private String stripCodeFence(String content) {
+        String trimmed = content.trim();
         if (trimmed.startsWith("```json") && trimmed.endsWith("```")) {
             return trimmed.substring(7, trimmed.length() - 3).trim();
         }

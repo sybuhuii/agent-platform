@@ -1,8 +1,12 @@
 import { get, put } from './client'
-import { conversationThreadSchema, conversationMessageSchema } from './contracts/schemas'
-import { z } from 'zod'
+import {
+  conversationMessagePageSchema,
+  conversationThreadPageSchema,
+  conversationThreadSchema
+} from './contracts/schemas'
 
 export interface ListThreadsParams {
+  cursorPinned?: boolean
   cursorThreadId?: string
   cursorLastMessageAt?: number
   pageSize?: number
@@ -10,12 +14,13 @@ export interface ListThreadsParams {
 
 export function listConversations(params?: ListThreadsParams, signal?: AbortSignal) {
   const searchParams = new URLSearchParams()
+  if (params?.cursorPinned != null) searchParams.set('cursorPinned', String(params.cursorPinned))
   if (params?.cursorThreadId) searchParams.set('cursorThreadId', params.cursorThreadId)
   if (params?.cursorLastMessageAt != null) searchParams.set('cursorLastMessageAt', String(params.cursorLastMessageAt))
   if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize))
   const qs = searchParams.toString()
   const url = qs ? `/api/conversations?${qs}` : '/api/conversations'
-  return get(url, z.array(conversationThreadSchema), signal)
+  return get(url, conversationThreadPageSchema, signal)
 }
 
 export function listMessages(threadId: string, beforeSequence?: number, pageSize?: number, signal?: AbortSignal) {
@@ -24,7 +29,7 @@ export function listMessages(threadId: string, beforeSequence?: number, pageSize
   if (pageSize) searchParams.set('pageSize', String(pageSize))
   const qs = searchParams.toString()
   const url = qs ? `/api/conversations/${threadId}/messages?${qs}` : `/api/conversations/${threadId}/messages`
-  return get(url, z.array(conversationMessageSchema), signal)
+  return get(url, conversationMessagePageSchema, signal)
 }
 
 export function renameConversation(threadId: string, title: string, signal?: AbortSignal) {

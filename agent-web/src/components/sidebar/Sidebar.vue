@@ -91,10 +91,15 @@ function openRenameDialog(conversation: Conversation) {
   renameDialogOpen.value = true
 }
 
-function handleRename() {
+async function handleRename() {
   if (!renameTarget.value) return
-  if (!chatStore.renameConversation(renameTarget.value.conversationId, renameTitle.value)) {
-    renameError.value = '请输入会话名称'
+  try {
+    if (!await chatStore.renameConversation(renameTarget.value.conversationId, renameTitle.value)) {
+      renameError.value = '请输入会话名称'
+      return
+    }
+  } catch {
+    renameError.value = '重命名失败，请稍后重试'
     return
   }
   renameDialogOpen.value = false
@@ -106,15 +111,23 @@ function openDeleteDialog(conversation: Conversation) {
   deleteDialogOpen.value = true
 }
 
-function handleDelete() {
+async function handleDelete() {
   if (!deleteTarget.value) return
-  chatStore.deleteConversation(deleteTarget.value.conversationId)
+  try {
+    await chatStore.deleteConversation(deleteTarget.value.conversationId)
+  } catch {
+    return
+  }
   deleteDialogOpen.value = false
   deleteTarget.value = null
 }
 
-function togglePinned(conversation: Conversation) {
-  chatStore.setConversationPinned(conversation.conversationId, !conversation.pinned)
+async function togglePinned(conversation: Conversation) {
+  try {
+    await chatStore.setConversationPinned(conversation.conversationId, !conversation.pinned)
+  } catch {
+    // Keep the local state unchanged when persistence fails.
+  }
 }
 
 function handleNewConversation() {

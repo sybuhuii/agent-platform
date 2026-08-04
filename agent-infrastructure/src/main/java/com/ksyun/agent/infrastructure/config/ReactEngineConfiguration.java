@@ -3,6 +3,7 @@ package com.ksyun.agent.infrastructure.config;
 import com.ksyun.agent.application.approval.ApprovalDecisionService;
 import com.ksyun.agent.application.approval.ApprovalResumeApplicationService;
 import com.ksyun.agent.application.approval.PendingApprovalQueryService;
+import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
 import com.ksyun.agent.application.react.ReactDevApplicationService;
 import com.ksyun.agent.core.approval.ApprovalIdGenerator;
 import com.ksyun.agent.core.exception.AgentErrorCode;
@@ -337,7 +338,8 @@ public class ReactEngineConfiguration {
             ThreadExecutionCoordinator threadExecutionCoordinator,
             ThreadConversationCheckpointService threadConversationCheckpointService,
             com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorChildRunLinkResolver linkResolver,
-            HumanApprovalGateway humanApprovalGateway
+            HumanApprovalGateway humanApprovalGateway,
+            ConversationHistoryApplicationService conversationHistoryApplicationService
     ) {
         com.ksyun.agent.runtime.supervisor.SupervisorResumeEngine supervisorResumeEngine =
                 supervisorResumeEngineProvider.getIfAvailable();
@@ -349,7 +351,8 @@ public class ReactEngineConfiguration {
                 threadExecutionCoordinator,
                 threadConversationCheckpointService,
                 linkResolver,
-                humanApprovalGateway);
+                humanApprovalGateway,
+                conversationHistoryApplicationService);
     }
 
     // ---- Dev Application Service ----

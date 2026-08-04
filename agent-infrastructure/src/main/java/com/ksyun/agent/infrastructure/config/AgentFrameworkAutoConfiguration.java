@@ -614,6 +614,8 @@ public class AgentFrameworkAutoConfiguration {
     @ConditionalOnMissingBean
     @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
             name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnExpression(
+            "'${agent.memory.backend:in-memory}' == 'in-memory'")
     public MemoryStore memoryStore() {
         return new InMemoryMemoryStore();
     }
@@ -789,8 +791,9 @@ public class AgentFrameworkAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public com.ksyun.agent.core.store.ConversationStore conversationStore(
-            com.ksyun.agent.core.conversation.MessageIdGenerator messageIdGenerator) {
-        return new InMemoryConversationStore(messageIdGenerator);
+            com.ksyun.agent.core.conversation.MessageIdGenerator messageIdGenerator,
+            Clock clock) {
+        return new InMemoryConversationStore(messageIdGenerator, clock);
     }
 
     @Bean

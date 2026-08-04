@@ -1,6 +1,10 @@
 package com.ksyun.agent.application.conversation;
 
+import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.conversation.ConversationMessage;
+import com.ksyun.agent.core.conversation.ConversationParticipantType;
+import com.ksyun.agent.core.conversation.ConversationReply;
+import com.ksyun.agent.core.conversation.ConversationRound;
 import com.ksyun.agent.core.conversation.ConversationThread;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
@@ -9,28 +13,17 @@ import com.ksyun.agent.core.store.ConversationStore;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/**
- * 会话历史应用服务，纯 Java 实现。
- * <p>
- * 负责已认证用户的会话列表、消息查询、重命名、置顶、归档和执行结果记录。
- * 在现有 Agent/Supervisor/审批恢复调用流程中做最小编排接入。
- * <p>
- * 约束：
- * - 不依赖 Spring Web/JDBC/Servlet。
- * - 所有 userId 只能来自已验证 UserSession。
- * - 生成稳定的非敏感 deduplicationKey，不接受客户端提交。
- * - 模型调用与数据库写入不在同一事务，通过去重键保证最终一致。
- * - 不调用模型、工具、CheckpointStore 或 SessionStore。
- */
+/** Application service for durable user-visible conversation history. */
 public class ConversationHistoryApplicationService {
 
     private static final int DEFAULT_PAGE_SIZE = 50;
     private static final int MAX_PAGE_SIZE = 100;
-    private static final int DEFAULT_MSG_PAGE_SIZE = 50;
+    private static final int MAX_TITLE_LENGTH = 80;
 
     private final ConversationStore conversationStore;
     private final Clock clock;
@@ -40,197 +33,195 @@ public class ConversationHistoryApplicationService {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    /**
-     * 记录一轮执行结果（用户消息 + 助手消息）。
-     * <p>
-     * 首次调用创建 thread，续接调用追加。
-     * 模型调用完成后调用，使用 runId 构造去重键。
-     *
-     * @param session    已认证会话
-     * @param threadId   会话 ID
-     * @param agentName  agent/supervisor 名称
-     * @param userMessage 用户消息
-     * @param assistantContent 助手回复内容
-     * @param runId      本次运行 ID（用于去重）
-     * @return 写入后的消息列表
-     */
     public List<ConversationMessage> recordRound(
             UserSession session,
             String threadId,
-            String agentName,
+            ConversationParticipantType participantType,
+            String participantName,
             String userMessage,
-            String assistantContent,
-            String runId) {
-        Objects.requireNonNull(session, "session must not be null");
-        validateThreadOrRunId(threadId, runId);
-        validateContent(userMessage);
-        if (assistantContent == null || assistantContent.isBlank()) {
-            // 助手无内容（如 SUSPENDED）时不写助手消息，只创建 thread 和用户消息
-            return recordUserOnly(session, threadId, agentName, userMessage, runId);
-        }
+            String runId,
+            AgentResult result) {
+        requireSession(session);
+        String safeThreadId = requireText(threadId, "threadId");
+        String safeParticipantName = requireText(participantName, "participantName");
+        String safeRunId = requireText(runId, "runId");
+        String safeUserMessage = requireText(userMessage, "message");
+        Objects.requireNonNull(participantType, "participantType must not be null");
+        Objects.requireNonNull(result, "result must not be null");
 
-        String userDedupKey = "invoke:" + runId + ":user";
-        String assistantDedupKey = "invoke:" + runId + ":assistant";
-
-        Optional<ConversationThread> existing = conversationStore.findThread(session.userId(), threadId);
-        Instant now = clock.instant();
-
+        ConversationReply reply = visibleReply(result, safeRunId,
+                "invoke:" + safeRunId + ":assistant");
+        ConversationRound round = new ConversationRound(
+                safeRunId, safeUserMessage, "invoke:" + safeRunId + ":user", reply);
+        Optional<ConversationThread> existing = conversationStore.findThread(session.userId(), safeThreadId);
         if (existing.isEmpty()) {
+            Instant now = clock.instant();
             ConversationThread thread = new ConversationThread(
-                    threadId, session.userId(), deriveTitle(userMessage),
-                    false, false, agentName, now, now, now);
-            return conversationStore.createThreadWithFirstRound(
-                    thread, userMessage, assistantContent, userDedupKey, assistantDedupKey);
+                    safeThreadId, session.userId(), deriveTitle(safeUserMessage), false, false,
+                    participantType, safeParticipantName, now, now, now);
+            return conversationStore.createThreadWithFirstRound(thread, round);
         }
-
-        return conversationStore.appendRound(
-                session.userId(), threadId, userMessage, assistantContent,
-                userDedupKey, assistantDedupKey);
+        validateParticipant(existing.get(), participantType, safeParticipantName);
+        return conversationStore.appendRound(session.userId(), safeThreadId,
+                participantType, safeParticipantName, round);
     }
 
-    /**
-     * 只记录用户消息（助手无内容，如挂起场景）。
-     */
-    private List<ConversationMessage> recordUserOnly(
+    public Optional<ConversationMessage> recordApprovalResume(
             UserSession session,
             String threadId,
-            String agentName,
-            String userMessage,
-            String runId) {
-        String userDedupKey = "invoke:" + runId + ":user";
-        Optional<ConversationThread> existing = conversationStore.findThread(session.userId(), threadId);
-        Instant now = clock.instant();
-
-        if (existing.isEmpty()) {
-            ConversationThread thread = new ConversationThread(
-                    threadId, session.userId(), deriveTitle(userMessage),
-                    false, false, agentName, now, now, now);
-            // 用占位助手内容创建，然后……实际上首轮必须有助手消息。
-            // 这里改为：创建 thread 后单独记录用户消息。
-            // 但 createThreadWithFirstRound 要求两条消息。挂起时助手无内容，
-            // 我们记录一条用户消息和一条空助手消息会违反非空约束。
-            // 因此挂起场景下只创建 thread（无消息），后续恢复时再补助手消息。
-            conversationStore.createThreadWithFirstRound(
-                    thread, userMessage, assistantPlaceholderForSuspend(userMessage),
-                    userDedupKey, "invoke:" + runId + ":assistant");
-        } else {
-            // 续接挂起：追加用户消息，助手消息用一个标记占位
-            conversationStore.appendRound(
-                    session.userId(), threadId, userMessage,
-                    assistantPlaceholderForSuspend(userMessage),
-                    userDedupKey, "invoke:" + runId + ":assistant");
+            ConversationParticipantType participantType,
+            String participantName,
+            String runId,
+            String approvalId,
+            AgentResult result) {
+        requireSession(session);
+        String safeThreadId = requireText(threadId, "threadId");
+        String safeParticipantName = requireText(participantName, "participantName");
+        String safeRunId = requireText(runId, "runId");
+        String safeApprovalId = requireText(approvalId, "approvalId");
+        Objects.requireNonNull(participantType, "participantType must not be null");
+        Objects.requireNonNull(result, "result must not be null");
+        ConversationReply reply = visibleReply(result, safeRunId,
+                "approval-resume:" + safeApprovalId + ":assistant");
+        if (reply == null) {
+            return Optional.empty();
         }
-        // 返回查询当前消息
-        return conversationStore.listMessages(session.userId(), threadId, null, MAX_PAGE_SIZE);
+        Optional<ConversationThread> thread = conversationStore.findThread(session.userId(), safeThreadId);
+        if (thread.isEmpty()) {
+            return Optional.empty();
+        }
+        validateParticipant(thread.get(), participantType, safeParticipantName);
+        return Optional.of(conversationStore.appendAssistantMessage(
+                session.userId(), safeThreadId, participantType, safeParticipantName, reply));
     }
 
-    /**
-     * 记录审批恢复后的助手消息。
-     */
-    public ConversationMessage recordApprovalResume(
+    public void validateContinuation(
             UserSession session,
             String threadId,
-            String assistantContent,
-            String approvalId) {
-        Objects.requireNonNull(session, "session must not be null");
-        validateThreadOrRunId(threadId, approvalId);
-        if (assistantContent == null || assistantContent.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                    "assistant content must not be blank for approval resume");
-        }
-        String dedupKey = "approval-resume:" + approvalId + ":assistant";
-        return conversationStore.appendAssistantMessage(
-                session.userId(), threadId, assistantContent, dedupKey);
+            ConversationParticipantType participantType,
+            String participantName) {
+        requireSession(session);
+        ConversationThread thread = conversationStore.findThread(
+                        session.userId(), requireText(threadId, "threadId"))
+                .orElseThrow(() -> new AgentFrameworkException(
+                        AgentErrorCode.THREAD_NOT_FOUND, "Conversation thread not found for user"));
+        validateParticipant(thread, participantType, requireText(participantName, "participantName"));
     }
 
-    /**
-     * 列出当前用户的未归档会话。
-     */
-    public List<ConversationThread> listThreads(UserSession session, String cursorThreadId,
-                                                  Long cursorLastMessageAtEpochMillis, int pageSize) {
-        Objects.requireNonNull(session, "session must not be null");
+    /** Validates durable participant ownership when visible history already exists. */
+    public void validateContinuationIfPresent(
+            UserSession session,
+            String threadId,
+            ConversationParticipantType participantType,
+            String participantName) {
+        requireSession(session);
+        Optional<ConversationThread> thread = conversationStore.findThread(
+                session.userId(), requireText(threadId, "threadId"));
+        thread.ifPresent(existing -> validateParticipant(
+                existing, participantType, requireText(participantName, "participantName")));
+    }
+
+    public ConversationThreadPage listThreads(
+            UserSession session,
+            Boolean cursorPinned,
+            String cursorThreadId,
+            Long cursorLastMessageAtEpochMillis,
+            int pageSize) {
+        requireSession(session);
         int limit = sanitizePageSize(pageSize);
-
         ConversationStore.ThreadCursor cursor = null;
-        if (cursorThreadId != null && !cursorThreadId.isBlank() && cursorLastMessageAtEpochMillis != null) {
-            cursor = new ConversationStore.ThreadCursor(
-                    Instant.ofEpochMilli(cursorLastMessageAtEpochMillis), cursorThreadId.trim());
+        boolean anyCursorValue = cursorPinned != null || cursorThreadId != null
+                || cursorLastMessageAtEpochMillis != null;
+        if (anyCursorValue) {
+            if (cursorPinned == null || cursorThreadId == null || cursorLastMessageAtEpochMillis == null) {
+                throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
+                        "All conversation cursor fields are required together");
+            }
+            cursor = new ConversationStore.ThreadCursor(cursorPinned,
+                    Instant.ofEpochMilli(cursorLastMessageAtEpochMillis), cursorThreadId);
         }
-        return conversationStore.listThreads(session.userId(), cursor, limit);
+        List<ConversationThread> loaded = new ArrayList<>(
+                conversationStore.listThreads(session.userId(), cursor, limit + 1));
+        boolean hasMore = loaded.size() > limit;
+        if (hasMore) {
+            loaded.remove(loaded.size() - 1);
+        }
+        ConversationThread last = loaded.isEmpty() ? null : loaded.get(loaded.size() - 1);
+        return new ConversationThreadPage(loaded, hasMore,
+                last == null ? null : last.pinned(),
+                last == null ? null : last.lastMessageAt().toEpochMilli(),
+                last == null ? null : last.threadId());
     }
 
-    /**
-     * 列出指定会话的消息。
-     */
-    public List<ConversationMessage> listMessages(UserSession session, String threadId,
-                                                    Long beforeSequence, int pageSize) {
-        Objects.requireNonNull(session, "session must not be null");
-        if (threadId == null || threadId.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "threadId must not be blank");
-        }
+    public ConversationMessagePage listMessages(
+            UserSession session, String threadId, Long beforeSequence, int pageSize) {
+        requireSession(session);
         int limit = sanitizePageSize(pageSize);
-        return conversationStore.listMessages(session.userId(), threadId, beforeSequence, limit);
+        List<ConversationMessage> loaded = new ArrayList<>(conversationStore.listMessages(
+                session.userId(), requireText(threadId, "threadId"), beforeSequence, limit + 1));
+        boolean hasMore = loaded.size() > limit;
+        if (hasMore) {
+            loaded.remove(0);
+        }
+        Long nextBefore = loaded.isEmpty() ? null : loaded.get(0).sequenceNo();
+        return new ConversationMessagePage(loaded, hasMore, nextBefore);
     }
 
     public Optional<ConversationThread> rename(UserSession session, String threadId, String title) {
-        Objects.requireNonNull(session, "session must not be null");
-        if (threadId == null || threadId.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "threadId must not be blank");
+        requireSession(session);
+        String safeTitle = requireText(title, "title");
+        if (safeTitle.length() > MAX_TITLE_LENGTH) {
+            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
+                    "title must not exceed " + MAX_TITLE_LENGTH + " characters");
         }
-        if (title == null || title.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "title must not be blank");
-        }
-        return conversationStore.rename(session.userId(), threadId, title.trim());
+        return conversationStore.rename(session.userId(), requireText(threadId, "threadId"), safeTitle);
     }
 
     public Optional<ConversationThread> setPinned(UserSession session, String threadId, boolean pinned) {
-        Objects.requireNonNull(session, "session must not be null");
-        if (threadId == null || threadId.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "threadId must not be blank");
-        }
-        return conversationStore.setPinned(session.userId(), threadId, pinned);
+        requireSession(session);
+        return conversationStore.setPinned(session.userId(), requireText(threadId, "threadId"), pinned);
     }
 
     public Optional<ConversationThread> archive(UserSession session, String threadId) {
-        Objects.requireNonNull(session, "session must not be null");
-        if (threadId == null || threadId.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "threadId must not be blank");
-        }
-        return conversationStore.archive(session.userId(), threadId);
+        requireSession(session);
+        return conversationStore.archive(session.userId(), requireText(threadId, "threadId"));
     }
 
-    // ---- 内部 ----
+    private ConversationReply visibleReply(AgentResult result, String runId, String deduplicationKey) {
+        if (result.content() == null || result.content().isBlank()) {
+            return null;
+        }
+        return new ConversationReply(runId, result.content(), result.success(),
+                result.errorCode(), Objects.requireNonNull(result.status(), "result status must not be null"),
+                deduplicationKey);
+    }
+
+    private void validateParticipant(
+            ConversationThread thread, ConversationParticipantType type, String name) {
+        if (type == null || thread.participantType() != type || !thread.participantName().equals(name)) {
+            throw new AgentFrameworkException(AgentErrorCode.THREAD_PARTICIPANT_MISMATCH,
+                    "Conversation belongs to a different participant");
+        }
+    }
 
     private int sanitizePageSize(int pageSize) {
-        if (pageSize <= 0) {
-            return DEFAULT_PAGE_SIZE;
-        }
-        return Math.min(pageSize, MAX_PAGE_SIZE);
+        return pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
     }
 
-    private void validateThreadOrRunId(String threadId, String runId) {
-        if (threadId == null || threadId.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "threadId must not be blank");
-        }
-        if (runId == null || runId.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "runId must not be blank");
+    private String deriveTitle(String message) {
+        return message.length() <= MAX_TITLE_LENGTH ? message : message.substring(0, MAX_TITLE_LENGTH);
+    }
+
+    private void requireSession(UserSession session) {
+        if (session == null) {
+            throw new AgentFrameworkException(AgentErrorCode.SESSION_INVALID, "session must not be null");
         }
     }
 
-    private void validateContent(String content) {
-        if (content == null || content.isBlank()) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, "content must not be blank");
+    private String requireText(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT, field + " must not be blank");
         }
-    }
-
-    private String deriveTitle(String userMessage) {
-        String trimmed = userMessage.trim();
-        return trimmed.length() <= 50 ? trimmed : trimmed.substring(0, 50);
-    }
-
-    private String assistantPlaceholderForSuspend(String userMessage) {
-        // 挂起时助手无内容，但首轮/追加要求两条消息。
-        // 这里用一个可识别的占位文本，恢复后会追加真实助手消息。
-        return "（等待审批恢复中）";
+        return value.trim();
     }
 }

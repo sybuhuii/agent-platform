@@ -1,6 +1,8 @@
 package com.ksyun.agent.application.approval;
 
+import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.conversation.ConversationParticipantType;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
@@ -61,6 +63,7 @@ public class ApprovalResumeApplicationService {
     private final ThreadConversationCheckpointService threadConversationCheckpointService;
     private final SupervisorChildRunLinkResolver linkResolver;
     private final HumanApprovalGateway humanApprovalGateway;
+    private final ConversationHistoryApplicationService conversationHistoryApplicationService;
 
     public ApprovalResumeApplicationService(
             ApprovalDecisionService decisionService,
@@ -70,7 +73,8 @@ public class ApprovalResumeApplicationService {
             ThreadExecutionCoordinator threadExecutionCoordinator,
             ThreadConversationCheckpointService threadConversationCheckpointService,
             SupervisorChildRunLinkResolver linkResolver,
-            HumanApprovalGateway humanApprovalGateway) {
+            HumanApprovalGateway humanApprovalGateway,
+            ConversationHistoryApplicationService conversationHistoryApplicationService) {
         this.decisionService = Objects.requireNonNull(decisionService);
         this.resumeEngine = Objects.requireNonNull(resumeEngine);
         this.supervisorResumeEngine = supervisorResumeEngine;
@@ -79,6 +83,7 @@ public class ApprovalResumeApplicationService {
         this.threadConversationCheckpointService = Objects.requireNonNull(threadConversationCheckpointService);
         this.linkResolver = Objects.requireNonNull(linkResolver);
         this.humanApprovalGateway = Objects.requireNonNull(humanApprovalGateway);
+        this.conversationHistoryApplicationService = Objects.requireNonNull(conversationHistoryApplicationService);
     }
 
     /**
@@ -178,6 +183,9 @@ public class ApprovalResumeApplicationService {
             AgentResult agentResult = outcome.result();
 
             handleThreadSync(command.runId(), userId, threadId, outcome, agentResult);
+            conversationHistoryApplicationService.recordApprovalResume(
+                    operator, threadId, ConversationParticipantType.AGENT,
+                    agentResult.agentName(), command.runId(), command.approvalId(), agentResult);
 
             ReactResumeResult reactResult = ReactResumeResult.from(command.runId(), threadId, agentResult);
             return ApprovalResumeResult.fromReactResult(reactResult);
@@ -226,6 +234,9 @@ public class ApprovalResumeApplicationService {
             AgentResult supervisorResult = supervisorOutcome.result();
             handleThreadSync(link.parentRunId(), userId, parentThreadId, supervisorOutcome, supervisorResult);
             cleanupChildHitlCheckpoint(command.runId(), userId, childThreadId);
+            conversationHistoryApplicationService.recordApprovalResume(
+                    operator, parentThreadId, ConversationParticipantType.SUPERVISOR,
+                    supervisorResult.agentName(), link.parentRunId(), command.approvalId(), supervisorResult);
 
             return ApprovalResumeResult.fromSupervisorResult(
                     supervisorResult, link.parentRunId(), parentThreadId);

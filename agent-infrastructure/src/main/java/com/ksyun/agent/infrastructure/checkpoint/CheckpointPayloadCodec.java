@@ -15,6 +15,7 @@ import com.ksyun.agent.core.approval.ApprovalDecision;
 import com.ksyun.agent.core.approval.ApprovalStatus;
 import com.ksyun.agent.core.approval.InterruptPayload;
 import com.ksyun.agent.core.approval.NodeResumeData;
+import com.ksyun.agent.core.approval.NodeResumeDataCodec;
 import com.ksyun.agent.core.approval.OperationType;
 import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.context.ContextProcessingTrace;
@@ -86,29 +87,28 @@ public class CheckpointPayloadCodec {
     private static final String KIND_THREAD_MEMORY_REACT = "THREAD_MEMORY_REACT";
     private static final String KIND_THREAD_MEMORY_SUPERVISOR = "THREAD_MEMORY_SUPERVISOR";
 
-    private static final String RESUME_DATA_TYPE_SAMPLE_NODE = "sample_node_approval";
-
-    /**
-     * Known NodeResumeData type registrations.
-     * Key: resumeDataType identifier, Value: record component names for reconstruction.
-     * <p>
-     * SampleNodeResumeData is in agent-bootstrap which is not a compile dependency of
-     * agent-infrastructure, so we use reflection to reconstruct it at runtime.
-     */
-    private static final Map<String, NodeResumeDataTypeDescriptor> KNOWN_RESUME_DATA_TYPES = Map.of(
-            RESUME_DATA_TYPE_SAMPLE_NODE,
-            new NodeResumeDataTypeDescriptor(
-                    "com.ksyun.agent.bootstrap.sample.node.SampleNodeResumeData",
-                    List.of("stepId", "continuationIndex"))
-    );
-
     private final ObjectMapper objectMapper;
     private final SensitiveValueSanitizer sanitizer;
+    private final Map<String, NodeResumeDataCodec<?>> resumeDataCodecsByKey;
+    private final Map<Class<? extends NodeResumeData>, NodeResumeDataCodec<?>> resumeDataCodecsByClass;
 
-    public CheckpointPayloadCodec(ObjectMapper baseMapper, SensitiveValueSanitizer sanitizer) {
+    public CheckpointPayloadCodec(ObjectMapper baseMapper,
+                                  SensitiveValueSanitizer sanitizer,
+                                  List<NodeResumeDataCodec<?>> resumeDataCodecs) {
         Objects.requireNonNull(baseMapper, "baseMapper must not be null");
         Objects.requireNonNull(sanitizer, "sanitizer must not be null");
         this.sanitizer = sanitizer;
+        Map<String, NodeResumeDataCodec<?>> byKey = new LinkedHashMap<>();
+        Map<Class<? extends NodeResumeData>, NodeResumeDataCodec<?>> byClass = new LinkedHashMap<>();
+        for (NodeResumeDataCodec<?> codec : List.copyOf(resumeDataCodecs)) {
+            NodeResumeDataCodec<?> duplicateKey = byKey.putIfAbsent(codec.typeKey(), codec);
+            NodeResumeDataCodec<?> duplicateClass = byClass.putIfAbsent(codec.dataType(), codec);
+            if (duplicateKey != null || duplicateClass != null) {
+                throw new IllegalArgumentException("Duplicate NodeResumeData codec registration: " + codec.typeKey());
+            }
+        }
+        this.resumeDataCodecsByKey = Map.copyOf(byKey);
+        this.resumeDataCodecsByClass = Map.copyOf(byClass);
 
         // Create a safe copy with our modules, without modifying the global mapper
         this.objectMapper = baseMapper.copy()
@@ -832,35 +832,21 @@ public class CheckpointPayloadCodec {
         return m;
     }
 
-    /**
-     * Encodes NodeResumeData using a resumeDataType discriminator and the record's
-     * field values. Uses reflection-free approach: converts to a Map via Jackson
-     * and adds the type marker.
-     * <p>
-     * Known types are matched by class name. Unknown types produce a minimal marker
-     * and will be rejected on decode.
-     */
     private Map<String, Object> encodeNodeResumeData(NodeResumeData nrd) {
-        String className = nrd.getClass().getName();
-        // Match known types by class name
-        for (Map.Entry<String, NodeResumeDataTypeDescriptor> entry : KNOWN_RESUME_DATA_TYPES.entrySet()) {
-            if (entry.getValue().className().equals(className)) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("resumeDataType", entry.getKey());
-                // Extract record component values via Jackson conversion
-                Map<String, Object> fields = objectMapper.convertValue(nrd,
-                        new TypeReference<Map<String, Object>>() {});
-                for (Map.Entry<String, Object> field : fields.entrySet()) {
-                    m.putIfAbsent(field.getKey(), field.getValue());
-                }
-                return m;
-            }
+        NodeResumeDataCodec<?> codec = resumeDataCodecsByClass.get(nrd.getClass());
+        if (codec == null) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "No codec registered for node resume data");
         }
-        // Unknown type — cannot decode later, so mark as unknown
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("resumeDataType", "unknown");
-        m.put("className", className);
-        return m;
+        m.put("resumeDataType", codec.typeKey());
+        m.putAll(encodeWithCodec(codec, nrd));
+        return Collections.unmodifiableMap(m);
+    }
+
+    private <D extends NodeResumeData> Map<String, Object> encodeWithCodec(
+            NodeResumeDataCodec<D> codec, NodeResumeData data) {
+        return codec.encode(codec.dataType().cast(data));
     }
 
     // ========== Domain Decoding Helpers ==========
@@ -1108,88 +1094,21 @@ public class CheckpointPayloadCodec {
                 Instant.parse(node.path("decidedAt").asText()));
     }
 
-    /**
-     * Decodes NodeResumeData by reconstructing the known record type via reflection.
-     * <p>
-     * SampleNodeResumeData lives in agent-bootstrap, which is not a compile dependency
-     * of agent-infrastructure. At runtime (Spring Boot fat jar) the class is available,
-     * so we use reflection to reconstruct it. Unknown types are rejected.
-     *
-     * @param node the JSON node containing resumeDataType and record fields
-     * @return reconstructed NodeResumeData instance
-     * @throws AgentFrameworkException if the type is unknown or reconstruction fails
-     */
     private NodeResumeData decodeNodeResumeData(JsonNode node) {
         String resumeDataType = node.path("resumeDataType").asText("");
-        NodeResumeDataTypeDescriptor descriptor = KNOWN_RESUME_DATA_TYPES.get(resumeDataType);
-        if (descriptor == null) {
+        NodeResumeDataCodec<?> codec = resumeDataCodecsByKey.get(resumeDataType);
+        if (codec == null) {
             throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
                     "Unknown nodeResumeData type: " + resumeDataType);
         }
-
         try {
-            Class<?> recordClass = Class.forName(descriptor.className());
-            List<String> componentNames = descriptor.componentNames();
-            Class<?>[] paramTypes = new Class<?>[componentNames.size()];
-            Object[] paramValues = new Object[componentNames.size()];
-            for (int i = 0; i < componentNames.size(); i++) {
-                String name = componentNames.get(i);
-                JsonNode fieldNode = node.path(name);
-                paramTypes[i] = resolveComponentType(fieldNode);
-                paramValues[i] = resolveComponentValue(fieldNode, paramTypes[i]);
-            }
-            java.lang.reflect.Constructor<?> ctor =
-                    recordClass.getDeclaredConstructor(paramTypes);
-            ctor.setAccessible(true);
-            return (NodeResumeData) ctor.newInstance(paramValues);
-        } catch (ClassNotFoundException e) {
+            Map<String, Object> fields = new LinkedHashMap<>(decodeStringObjectMap(node));
+            fields.remove("resumeDataType");
+            return codec.decode(Collections.unmodifiableMap(fields));
+        } catch (RuntimeException e) {
             throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "Cannot load NodeResumeData class for type: " + resumeDataType, e);
-        } catch (ReflectiveOperationException e) {
-            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "Failed to reconstruct NodeResumeData for type: " + resumeDataType, e);
+                    "Invalid nodeResumeData payload for type: " + resumeDataType, e);
         }
-    }
-
-    private static Class<?> resolveComponentType(JsonNode fieldNode) {
-        if (fieldNode == null || fieldNode.isNull()) {
-            return Object.class;
-        }
-        if (fieldNode.isTextual()) {
-            return String.class;
-        }
-        if (fieldNode.isInt() || fieldNode.isLong()) {
-            return int.class;
-        }
-        if (fieldNode.isBoolean()) {
-            return boolean.class;
-        }
-        if (fieldNode.isObject()) {
-            return Map.class;
-        }
-        if (fieldNode.isArray()) {
-            return List.class;
-        }
-        return Object.class;
-    }
-
-    private static Object resolveComponentValue(JsonNode fieldNode, Class<?> type) {
-        if (fieldNode == null || fieldNode.isNull()) {
-            return null;
-        }
-        if (type == String.class) {
-            return fieldNode.asText("");
-        }
-        if (type == int.class || type == Integer.class) {
-            return fieldNode.asInt(0);
-        }
-        if (type == boolean.class || type == Boolean.class) {
-            return fieldNode.asBoolean(false);
-        }
-        if (type == long.class || type == Long.class) {
-            return fieldNode.asLong(0L);
-        }
-        return fieldNode.toString();
     }
 
     // ========== Utility Methods ==========
@@ -1226,6 +1145,17 @@ public class CheckpointPayloadCodec {
         } catch (JsonProcessingException e) {
             throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
                     "Failed to encode pendingApproval", e);
+        }
+    }
+
+    /** Encodes the already-sanitized approval argument summary as a JSON object. */
+    public String encodeSafeArguments(Map<String, Object> safeArguments) {
+        try {
+            return objectMapper.writeValueAsString(
+                    sanitizeAndTruncateMap(safeArguments, MAX_METADATA_VALUE_LENGTH));
+        } catch (JsonProcessingException e) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
+                    "Failed to encode approval argument summary", e);
         }
     }
 
@@ -1336,15 +1266,6 @@ public class CheckpointPayloadCodec {
     // ========== Inner DTOs ==========
 
     private record DecodedPayload(Map<String, Object> stateData, PendingApproval pendingApproval) {}
-
-    /**
-     * Descriptor for a known NodeResumeData record type, used for reflection-based
-     * reconstruction during decode. This avoids compile-time dependency on agent-bootstrap.
-     *
-     * @param className      fully qualified class name of the record
-     * @param componentNames ordered list of record component names (must match constructor order)
-     */
-    private record NodeResumeDataTypeDescriptor(String className, List<String> componentNames) {}
 
     // ========== Jackson Module for AgentMessage ==========
 
