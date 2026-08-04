@@ -63,7 +63,6 @@ public class ReactCheckpointLifecycleService {
                 resumingCheckpoint.runId(),
                 resumingCheckpoint.threadId(),
                 resumingCheckpoint.userId(),
-                resumingCheckpoint.sessionId(),
                 resumingCheckpoint.executionType(),
                 resumingCheckpoint.purpose(),       // HITL_RECOVERY 保持不变
                 resumingCheckpoint.agentName(),
@@ -120,7 +119,6 @@ public class ReactCheckpointLifecycleService {
                 resumingCheckpoint.runId(),
                 resumingCheckpoint.threadId(),
                 resumingCheckpoint.userId(),
-                resumingCheckpoint.sessionId(),
                 resumingCheckpoint.executionType(),
                 resumingCheckpoint.purpose(),       // HITL_RECOVERY 保持不变
                 resumingCheckpoint.agentName(),

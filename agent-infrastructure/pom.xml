@@ -27,6 +27,11 @@
             <groupId>com.ksyun.agent</groupId>
             <artifactId>agent-application</artifactId>
         </dependency>
+        <!-- Jackson JSR-310 (JavaTimeModule) for CheckpointPayloadCodec Instant (de)serialization -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>

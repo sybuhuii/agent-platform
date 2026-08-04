@@ -96,10 +96,12 @@ public class SupervisorEngineConfiguration {
             SupervisorThreadConversationStateMapper threadStateMapper,
             SupervisorThreadPersistencePolicy persistencePolicy,
             com.ksyun.agent.runtime.react.ReactResumeEngine reactResumeEngine,
+            SupervisorRegistry supervisorRegistry,
             Clock clock) {
         return new SupervisorResumeEngine(
                 checkpointService, stateMapper, graphFactory,
-                threadStateMapper, persistencePolicy, reactResumeEngine, clock);
+                threadStateMapper, persistencePolicy, reactResumeEngine,
+                supervisorRegistry, clock);
     }
 
     // --- Supervisor Nodes ---

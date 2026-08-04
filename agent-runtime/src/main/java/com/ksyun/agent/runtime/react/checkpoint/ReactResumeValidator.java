@@ -9,7 +9,6 @@ import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.CheckpointStatus;
-import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.tool.ToolCall;
 import com.ksyun.agent.runtime.react.ReactNodeNames;
@@ -41,8 +40,10 @@ import java.util.Objects;
  * 15. TOOL审批的 operationFingerprint 必须非空
  * 16. 使用 ToolOperationFingerprint 重新计算并完全匹配
  * 17. payload 中的 runId、threadId、userId、agentName、nodeName 必须与 Checkpoint 顶层一致
- * 18. RunContext 必须存在且类型正确
- * 19. RunContext 中的 runId、threadId、userId 必须与 Checkpoint 顶层一致
+ * <p>
+ * 注：RunContext 不再持久化到 payload，恢复时由当前已验证 UserSession 重建。
+ * 用户归属（operator.userId 与 checkpoint.userId 一致）已在步骤 2 校验，
+ * runId/threadId/userId 一致性由步骤 17（payload 与顶层一致）覆盖。
  * <p>
  * 任何校验失败时：
  * - 不得把 Checkpoint 改为 RESUMING
@@ -176,9 +177,8 @@ public class ReactResumeValidator {
         // 15. payload 中的 runId、threadId、userId、agentName、nodeName 必须与 Checkpoint 顶层一致
         validatePayloadIdentity(payload, checkpoint);
 
-        // 16. RunContext 必须存在且类型正确
-        // 17. RunContext 中的 runId、threadId、userId 必须与 Checkpoint 顶层一致
-        validateRunContext(stateData, checkpoint);
+        // RunContext 不再从 stateData 读取；恢复时由当前 UserSession 重建。
+        // runId/threadId/userId 一致性已由 validatePayloadIdentity 与用户归属校验覆盖。
     }
 
     private void validateStatus(AgentCheckpoint checkpoint) {
@@ -329,39 +329,6 @@ public class ReactResumeValidator {
             throw new AgentFrameworkException(
                     AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
                     "Payload nodeName does not match Checkpoint");
-        }
-    }
-
-    /**
-     * RunContext 必须存在且类型正确，身份字段与 Checkpoint 顶层一致。
-     * 不得信任或修正冲突的身份字段后继续恢复。
-     */
-    private void validateRunContext(Map<String, Object> stateData, AgentCheckpoint checkpoint) {
-        Object runContextObj = stateData.get(ReactStateKeys.RUN_CONTEXT);
-        if (runContextObj == null) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "RunContext is missing in stateData");
-        }
-        if (!(runContextObj instanceof RunContext rc)) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "RunContext has wrong type: expected RunContext, got " + runContextObj.getClass().getName());
-        }
-        if (!checkpoint.runId().equals(rc.runId())) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "RunContext.runId does not match Checkpoint.runId");
-        }
-        if (!checkpoint.threadId().equals(rc.threadId())) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "RunContext.threadId does not match Checkpoint.threadId");
-        }
-        if (!checkpoint.userId().equals(rc.userId())) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.CHECKPOINT_NOT_RESUMABLE,
-                    "RunContext.userId does not match Checkpoint.userId");
         }
     }
 

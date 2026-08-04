@@ -27,7 +27,7 @@ import javax.sql.DataSource;
  * <p>
  * 所有 Bean 均使用 {@code @ConditionalOnMissingBean}，允许外部替换默认实现。
  */
-@AutoConfiguration(after = AgentFrameworkAutoConfiguration.class)
+@AutoConfiguration
 @ConditionalOnProperty(name = "agent.persistence.backend", havingValue = "postgresql")
 @EnableConfigurationProperties(PersistenceProperties.class)
 public class PostgreSQLAutoConfiguration {
@@ -39,8 +39,8 @@ public class PostgreSQLAutoConfiguration {
      * 数据库连接失败时由 HikariCP 抛出明确异常，终止启动，不静默回退内存模式。
      */
     @Bean(destroyMethod = "close")
-    @ConditionalOnMissingBean
-    public DataSource dataSource(PersistenceProperties properties) {
+    @ConditionalOnMissingBean(DataSource.class)
+    public HikariDataSource dataSource(PersistenceProperties properties) {
         PersistenceProperties.PostgreSQL pg = properties.getPostgresql();
         validatePostgreSqlConfig(pg);
 
@@ -49,6 +49,7 @@ public class PostgreSQLAutoConfiguration {
         dataSource.setUsername(pg.getUsername());
         dataSource.setPassword(pg.getPassword());
         dataSource.setPoolName("agent-platform-postgresql");
+
         return dataSource;
     }
 

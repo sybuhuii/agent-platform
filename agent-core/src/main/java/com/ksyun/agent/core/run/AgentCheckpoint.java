@@ -28,6 +28,8 @@ import java.util.Set;
  * - 对状态中的已知 List、Set、Map 做防御性复制
  * - 不保存 CompiledGraph、Gateway、Registry、Spring Bean、模型客户端或异常
  * - 不得在 Checkpoint 中包含密码、credentialHash、sessionId 或 HTTP 对象
+ * - 持久化安全：Checkpoint 顶层和 payload 都不得保存 sessionId、roles、permissions
+ *   或完整 UserSession；恢复时的当前身份由调用方从已验证 UserSession 重建
  * - purpose 不可为空，区分 HITL_RECOVERY 和 THREAD_MEMORY
  * - HITL_RECOVERY 用于中断恢复，THREAD_MEMORY 用于线程短期状态
  * - 现有 HITL 构造调用必须补充 HITL_RECOVERY
@@ -38,7 +40,6 @@ import java.util.Set;
  * @param runId           运行 ID
  * @param threadId        线程 ID
  * @param userId          用户 ID
- * @param sessionId       安全关联字段
  * @param executionType   执行类型
  * @param purpose         Checkpoint 用途
  * @param agentName       Agent 名称
@@ -55,7 +56,6 @@ public record AgentCheckpoint(
         String runId,
         String threadId,
         String userId,
-        String sessionId,
         CheckpointExecutionType executionType,
         CheckpointPurpose purpose,
         String agentName,
@@ -79,7 +79,6 @@ public record AgentCheckpoint(
             String runId,
             String threadId,
             String userId,
-            String sessionId,
             CheckpointExecutionType executionType,
             String agentName,
             String nodeName,
@@ -90,7 +89,7 @@ public record AgentCheckpoint(
             Instant createdAt,
             Instant updatedAt
     ) {
-        this(checkpointId, runId, threadId, userId, sessionId, executionType,
+        this(checkpointId, runId, threadId, userId, executionType,
                 CheckpointPurpose.HITL_RECOVERY,
                 agentName, nodeName, stateData, pendingApproval, status,
                 version, createdAt, updatedAt);

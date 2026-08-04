@@ -32,6 +32,7 @@ import { jsonTransport } from '@/chat/jsonTransport'
 import type { ChatTransport } from '@/chat/chatTransport'
 import { AbortRequestError } from '@/api/errors'
 import { listSupervisors } from '@/api/framework'
+import { listConversations, listMessages } from '@/api/conversations'
 
 export const useChatStore = defineStore('chat', () => {
   // ─── 内部 Supervisor 名称（用户不可见） ───
@@ -579,6 +580,11 @@ export const useChatStore = defineStore('chat', () => {
     runState.value = { status: 'idle' }
 
     saveToStorage()
+
+    // 后端会话且本地无消息时，从后端加载历史
+    if (targetConv.threadId && targetConv.messages.length === 0) {
+      loadMessagesForConversation(conversationId)
+    }
   }
 
   /** 重命名会话；空标题不覆盖现有标题。 */
@@ -652,6 +658,64 @@ export const useChatStore = defineStore('chat', () => {
     clearStorage()
   }
 
+  /**
+   * 从后端加载会话列表（权威数据源）。
+   * 登录或刷新后调用，覆盖本地缓存。
+   */
+  async function loadConversationsFromBackend(): Promise<void> {
+    try {
+      const threads = await listConversations({ pageSize: 100 })
+      const now = Date.now()
+      // 保留本地未发送的新对话（无 threadId）
+      const localDrafts = conversations.value.filter(c => !c.threadId)
+      const loaded: Conversation[] = threads.map(t => ({
+        conversationId: t.threadId,
+        threadId: t.threadId,
+        title: t.title || '新对话',
+        pinned: t.pinned,
+        messages: [],
+        draft: '',
+        createdAt: t.createdAtEpochMillis,
+        lastMessageAt: t.lastMessageAtEpochMillis
+      }))
+      conversations.value = [...localDrafts, ...loaded]
+      if (loaded.length > 0) {
+        activeConversationId.value = loaded[0]!.conversationId
+      } else if (localDrafts.length > 0) {
+        activeConversationId.value = localDrafts[0]!.conversationId
+      } else {
+        newConversation()
+      }
+      saveToStorage()
+    } catch {
+      // 加载失败时保留本地缓存
+    }
+  }
+
+  /**
+   * 加载指定会话的消息历史。
+   */
+  async function loadMessagesForConversation(conversationId: string): Promise<void> {
+    const conv = conversations.value.find(c => c.conversationId === conversationId)
+    if (!conv || !conv.threadId) return
+    try {
+      const msgs = await listMessages(conv.threadId, undefined, 100)
+      const mapped: ChatMessage[] = msgs.map(m => ({
+        role: m.role === 'USER' ? 'user' : 'assistant',
+        id: m.messageId,
+        content: m.content,
+        timestamp: m.createdAtEpochMillis
+      } as ChatMessage))
+      conv.messages = mapped
+      conv.lastMessageAt = mapped.length > 0
+        ? mapped[mapped.length - 1]!.timestamp
+        : conv.lastMessageAt
+      saveToStorage()
+    } catch {
+      // 加载失败保留本地消息
+    }
+  }
+
   // ─── 初始化：从存储恢复会话 ───
   loadFromStorage()
   // 如果没有会话，自动创建一个
@@ -708,6 +772,8 @@ export const useChatStore = defineStore('chat', () => {
     setConversationPinned,
     switchThread,
     deleteConversation,
-    clearAllConversations
+    clearAllConversations,
+    loadConversationsFromBackend,
+    loadMessagesForConversation
   }
 })

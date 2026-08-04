@@ -11,20 +11,26 @@ import com.ksyun.agent.core.context.TokenCounter;
 import com.ksyun.agent.core.memory.MemoryContextOptions;
 import com.ksyun.agent.core.memory.MemoryIdGenerator;
 import com.ksyun.agent.core.store.CheckpointIdGenerator;
+import com.ksyun.agent.core.store.ToolAuditStore;
 import com.ksyun.agent.core.run.ThreadIdGenerator;
 import com.ksyun.agent.core.sanitizer.SensitiveValueSanitizer;
 import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.core.store.MemoryStore;
 import com.ksyun.agent.core.tool.ToolProvider;
+import com.ksyun.agent.core.tool.audit.ToolAuditIdGenerator;
 import com.ksyun.agent.core.supervisor.SupervisorProvider;
 import com.ksyun.agent.infrastructure.approval.UuidApprovalIdGenerator;
 import com.ksyun.agent.infrastructure.config.MemoryProperties;
 import com.ksyun.agent.infrastructure.sanitizer.DefaultSensitiveValueSanitizer;
 import com.ksyun.agent.infrastructure.store.InMemoryCheckpointStore;
+import com.ksyun.agent.infrastructure.store.InMemoryConversationStore;
 import com.ksyun.agent.infrastructure.store.InMemoryMemoryStore;
+import com.ksyun.agent.infrastructure.store.InMemoryToolAuditStore;
 import com.ksyun.agent.infrastructure.store.UuidCheckpointIdGenerator;
-import com.ksyun.agent.infrastructure.store.UuidThreadIdGenerator;
 import com.ksyun.agent.infrastructure.store.UuidMemoryIdGenerator;
+import com.ksyun.agent.infrastructure.store.UuidMessageIdGenerator;
+import com.ksyun.agent.infrastructure.store.UuidThreadIdGenerator;
+import com.ksyun.agent.infrastructure.store.UuidToolAuditIdGenerator;
 import com.ksyun.agent.infrastructure.tool.builtin.BuiltinToolProvider;
 import com.ksyun.agent.runtime.context.ContextMessageGrouper;
 import com.ksyun.agent.runtime.context.ContextMessageHistoryValidator;
@@ -267,8 +273,28 @@ public class AgentFrameworkAutoConfiguration {
     }
 
     @Bean
-    public ToolAuditInterceptor toolAuditInterceptor() {
-        return new ToolAuditInterceptor();
+    @ConditionalOnMissingBean(ToolAuditStore.class)
+    public ToolAuditStore toolAuditStore() {
+        return new InMemoryToolAuditStore();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ToolAuditIdGenerator.class)
+    public ToolAuditIdGenerator toolAuditIdGenerator() {
+        return new UuidToolAuditIdGenerator();
+    }
+
+    @Bean
+    public ToolAuditInterceptor toolAuditInterceptor(
+            ToolAuditStore auditStore,
+            ToolAuditIdGenerator auditIdGenerator,
+            Clock clock,
+            SensitiveValueSanitizer sanitizer) {
+        return new ToolAuditInterceptor(
+                auditStore,
+                auditIdGenerator,
+                clock,
+                sanitizer);
     }
 
     @Bean
@@ -750,5 +776,29 @@ public class AgentFrameworkAutoConfiguration {
             Clock clock) {
         return new com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationCheckpointService(
                 checkpointStore, checkpointValidator, stateMapper, checkpointIdGenerator, clock);
+    }
+
+    // ---- 会话历史 ----
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.core.conversation.MessageIdGenerator messageIdGenerator() {
+        return new UuidMessageIdGenerator();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.core.store.ConversationStore conversationStore(
+            com.ksyun.agent.core.conversation.MessageIdGenerator messageIdGenerator) {
+        return new InMemoryConversationStore(messageIdGenerator);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public com.ksyun.agent.application.conversation.ConversationHistoryApplicationService conversationHistoryApplicationService(
+            com.ksyun.agent.core.store.ConversationStore conversationStore,
+            Clock clock) {
+        return new com.ksyun.agent.application.conversation.ConversationHistoryApplicationService(
+                conversationStore, clock);
     }
 }

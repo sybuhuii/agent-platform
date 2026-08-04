@@ -104,7 +104,6 @@ public class CheckpointResumeCoordinator {
                 checkpoint.runId(),
                 checkpoint.threadId(),
                 checkpoint.userId(),
-                checkpoint.sessionId(),
                 checkpoint.executionType(),
                 checkpoint.purpose(),       // HITL_RECOVERY 保持不变
                 checkpoint.agentName(),

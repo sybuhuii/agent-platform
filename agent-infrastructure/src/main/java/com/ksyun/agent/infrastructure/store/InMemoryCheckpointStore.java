@@ -493,9 +493,6 @@ public class InMemoryCheckpointStore implements CheckpointStore {
                 && existing.runId().equals(updated.runId())
                 && existing.threadId().equals(updated.threadId())
                 && existing.userId().equals(updated.userId())
-                && Objects.equals(
-                existing.sessionId(),
-                updated.sessionId())
                 && existing.executionType()
                 == updated.executionType()
                 && existing.agentName()
@@ -512,9 +509,6 @@ public class InMemoryCheckpointStore implements CheckpointStore {
                 && first.runId().equals(second.runId())
                 && first.threadId().equals(second.threadId())
                 && first.userId().equals(second.userId())
-                && Objects.equals(
-                first.sessionId(),
-                second.sessionId())
                 && first.executionType()
                 == second.executionType()
                 && first.purpose() == second.purpose()

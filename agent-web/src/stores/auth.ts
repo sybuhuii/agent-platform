@@ -8,6 +8,7 @@ import { ref, computed } from 'vue'
 import * as authApi from '@/api/auth'
 import { getSessionId, clearSessionId } from '@/api/client'
 import type { UserInfoResponse } from '@/types'
+import { useChatStore } from '@/stores/chat'
 
 export const useAuthStore = defineStore('auth', () => {
   const currentUser = ref<UserInfoResponse | null>(null)
@@ -19,6 +20,12 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       await authApi.login(username, password)
       await fetchCurrentUser()
+      // 登录后从后端加载会话历史（权威数据源）
+      try {
+        await useChatStore().loadConversationsFromBackend()
+      } catch {
+        // 会话加载失败不阻断登录
+      }
     } finally {
       loading.value = false
     }
@@ -60,6 +67,12 @@ export const useAuthStore = defineStore('auth', () => {
       loading.value = true
       try {
         await fetchCurrentUser()
+        // 恢复认证后加载会话历史
+        try {
+          await useChatStore().loadConversationsFromBackend()
+        } catch {
+          // 会话加载失败不阻断恢复
+        }
       } finally {
         loading.value = false
       }

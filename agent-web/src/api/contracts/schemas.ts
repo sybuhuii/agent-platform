@@ -162,3 +162,23 @@ export const threadEntrySchema = z.object({
 }).strict()
 
 export const storedThreadsSchema = z.array(threadEntrySchema)
+
+// ─── 会话历史 API ───
+
+export const conversationThreadSchema = z.object({
+  threadId: z.string(),
+  title: z.string(),
+  pinned: z.boolean(),
+  archived: z.boolean(),
+  agentName: z.string().nullable(),
+  createdAtEpochMillis: z.number(),
+  lastMessageAtEpochMillis: z.number()
+})
+
+export const conversationMessageSchema = z.object({
+  messageId: z.string(),
+  sequenceNo: z.number(),
+  role: z.enum(['USER', 'ASSISTANT']),
+  content: z.string(),
+  createdAtEpochMillis: z.number()
+})

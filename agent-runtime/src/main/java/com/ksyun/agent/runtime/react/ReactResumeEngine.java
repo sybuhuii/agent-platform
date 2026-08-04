@@ -7,6 +7,7 @@ import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.CheckpointPurpose;
+import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationState;
@@ -16,6 +17,7 @@ import com.ksyun.agent.runtime.react.checkpoint.ReactCheckpointStateMapper;
 import com.ksyun.agent.runtime.react.checkpoint.ReactResumeValidator;
 import com.ksyun.agent.runtime.hitl.node.NodeResumeHandlerRegistry;
 import com.ksyun.agent.runtime.hitl.node.NodeResumeValidator;
+import com.ksyun.agent.runtime.registry.AgentRegistry;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,6 +76,7 @@ public class ReactResumeEngine {
     private final ReactAgentGraphFactory graphFactory;
     private final ReactThreadConversationStateMapper threadStateMapper;
     private final ReactThreadPersistencePolicy persistencePolicy;
+    private final AgentRegistry agentRegistry;
     private final Clock clock;
 
     public ReactResumeEngine(
@@ -86,6 +89,7 @@ public class ReactResumeEngine {
             ReactAgentGraphFactory graphFactory,
             ReactThreadConversationStateMapper threadStateMapper,
             ReactThreadPersistencePolicy persistencePolicy,
+            AgentRegistry agentRegistry,
             Clock clock) {
         this.resumeCoordinator = Objects.requireNonNull(resumeCoordinator);
         this.stateMapper = Objects.requireNonNull(stateMapper);
@@ -96,6 +100,7 @@ public class ReactResumeEngine {
         this.graphFactory = Objects.requireNonNull(graphFactory);
         this.threadStateMapper = Objects.requireNonNull(threadStateMapper);
         this.persistencePolicy = Objects.requireNonNull(persistencePolicy);
+        this.agentRegistry = Objects.requireNonNull(agentRegistry);
         this.clock = Objects.requireNonNull(clock);
     }
 
@@ -183,21 +188,38 @@ public class ReactResumeEngine {
         AgentResult finalResult;
         ReactAgentState finalState;
         try {
-            // 3a. 从 Checkpoint 重建 ReactAgentState
-            ReactAgentState resumeState = stateMapper.fromCheckpointForResume(resumingCheckpoint);
+            // 3a. 从当前 AgentRegistry 重建 Definition
+            com.ksyun.agent.core.agent.AgentDefinition definition =
+                    agentRegistry.find(resumingCheckpoint.agentName())
+                            .orElseThrow(() -> new AgentFrameworkException(
+                                    AgentErrorCode.AGENT_NOT_FOUND,
+                                    "Agent definition not found: " + resumingCheckpoint.agentName()));
 
-            // 3b. 每次独立编译恢复图
+            // 3b. 从当前 UserSession 重建 RunContext（使用当前权限，不恢复旧权限）
+            RunContext runContext = new RunContext(
+                    operator.userId(),
+                    operator.sessionId(),
+                    resumingCheckpoint.threadId(),
+                    resumingCheckpoint.runId(),
+                    operator.roles(),
+                    operator.permissions());
+
+            // 3c. 从 Checkpoint 重建 ReactAgentState（注入重建的 Definition / RunContext / System 消息）
+            ReactAgentState resumeState = stateMapper.fromCheckpointForResume(
+                    resumingCheckpoint, definition, runContext);
+
+            // 3d. 每次独立编译恢复图
             CompiledGraph<ReactAgentState> resumeGraph = operationType == OperationType.NODE
                     ? nodeResumeHandlerRegistry.compileResumeGraph(resumingCheckpoint)
                     : graphFactory.compileForResume();
 
-            // 3c. 调用恢复图
+            // 3e. 调用恢复图
             finalState = resumeGraph.invoke(resumeState.data())
                     .orElseThrow(() -> new AgentFrameworkException(
                             AgentErrorCode.INTERNAL_ERROR,
                             "Resume graph execution returned empty state"));
 
-            // 3d. 读取最终结果
+            // 3f. 读取最终结果
             finalResult = getFinalResult(finalState);
             if (finalResult == null) {
                 throw new AgentFrameworkException(

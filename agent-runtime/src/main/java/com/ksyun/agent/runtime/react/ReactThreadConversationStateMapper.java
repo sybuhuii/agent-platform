@@ -6,6 +6,7 @@ import com.ksyun.agent.core.approval.PendingApproval;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.message.AgentMessage;
+import com.ksyun.agent.core.message.MemoryContextAgentMessage;
 import com.ksyun.agent.core.message.SystemAgentMessage;
 import com.ksyun.agent.core.message.UserAgentMessage;
 import com.ksyun.agent.core.run.CheckpointExecutionType;
@@ -163,10 +164,18 @@ public class ReactThreadConversationStateMapper {
                             + ", stored " + previousState.participantName());
         }
 
-        // 复制完整消息列表，不修改 previousState.messages
-        List<AgentMessage> continuedMessages = new ArrayList<>(previousState.messages());
-
-        // 不重复插入 System 消息——保留上一轮完整历史中的原 System 消息
+        // THREAD_MEMORY 已过滤 SystemAgentMessage，续接时根据当前 Definition 重新创建一条 System 消息，
+        // 再追加持久化的非 System 历史，最后追加本次 User 消息
+        List<AgentMessage> continuedMessages = new ArrayList<>(previousState.messages().size() + 2);
+        if (definition.systemPrompt() != null && !definition.systemPrompt().isBlank()) {
+            continuedMessages.add(new SystemAgentMessage(definition.systemPrompt()));
+        }
+        // 防御性过滤：确保历史不混入 System/MemoryContext（payload 已过滤，此处双保险）
+        for (AgentMessage msg : previousState.messages()) {
+            if (!(msg instanceof SystemAgentMessage) && !(msg instanceof MemoryContextAgentMessage)) {
+                continuedMessages.add(msg);
+            }
+        }
         // 追加当前 AgentTask 中的 User 消息
         continuedMessages.add(new UserAgentMessage(task.instruction()));
 
@@ -274,6 +283,10 @@ public class ReactThreadConversationStateMapper {
                     "Cannot extract stable state: messages is null");
         }
 
+        // 持久化安全：THREAD_MEMORY 不持久化 SystemAgentMessage（恢复时由当前 Definition 重建）
+        // 和 MemoryContextAgentMessage（下次 Reason 重新注入）
+        List<AgentMessage> safeMessages = filterSafeMessages(messages);
+
         // 读取 ContextWindowSnapshot
         ContextWindowSnapshot snapshot = ReactStateKeys.getContextWindowSnapshot(finalState);
         ContextProcessingTrace trace = ReactStateKeys.getLatestContextTrace(finalState);
@@ -281,11 +294,28 @@ public class ReactThreadConversationStateMapper {
         return new ThreadConversationState(
                 CheckpointExecutionType.REACT_AGENT,
                 agentName,
-                messages,
+                safeMessages,
                 Optional.ofNullable(snapshot),
                 Optional.ofNullable(trace),
                 runId,
                 updatedAt
         );
+    }
+
+    /**
+     * 过滤消息列表，只保留可持久化类型：
+     * UserAgentMessage、AssistantAgentMessage、ToolAgentMessage、SummaryAgentMessage。
+     * <p>
+     * 排除：SystemAgentMessage（恢复时由当前 Definition 重建）、
+     * MemoryContextAgentMessage（下次 Reason 重新注入）。
+     */
+    private static List<AgentMessage> filterSafeMessages(List<AgentMessage> messages) {
+        List<AgentMessage> filtered = new ArrayList<>(messages.size());
+        for (AgentMessage msg : messages) {
+            if (!(msg instanceof SystemAgentMessage) && !(msg instanceof MemoryContextAgentMessage)) {
+                filtered.add(msg);
+            }
+        }
+        return List.copyOf(filtered);
     }
 }

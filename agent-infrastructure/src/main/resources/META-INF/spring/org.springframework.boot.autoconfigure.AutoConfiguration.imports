@@ -1,7 +1,9 @@
 com.ksyun.agent.infrastructure.config.AgentFrameworkAutoConfiguration
 com.ksyun.agent.infrastructure.config.PostgreSQLAutoConfiguration
 com.ksyun.agent.infrastructure.config.PostgreSQLMemoryAutoConfiguration
+com.ksyun.agent.infrastructure.config.PostgreSQLConversationAutoConfiguration
 com.ksyun.agent.infrastructure.config.PostgreSQLIdentityAutoConfiguration
+com.ksyun.agent.infrastructure.config.PostgreSQLCheckpointAuditAutoConfiguration
 com.ksyun.agent.infrastructure.config.SpringAiModelConfiguration
 com.ksyun.agent.infrastructure.config.ReactEngineConfiguration
 com.ksyun.agent.infrastructure.config.SupervisorEngineConfiguration

@@ -319,10 +319,12 @@ public class ReactEngineConfiguration {
             ReactAgentGraphFactory graphFactory,
             ReactThreadConversationStateMapper threadStateMapper,
             ReactThreadPersistencePolicy persistencePolicy,
+            AgentRegistry agentRegistry,
             Clock clock) {
         return new ReactResumeEngine(resumeCoordinator, stateMapper, resumeValidator,
                 nodeResumeValidator, nodeResumeHandlerRegistry,
-                lifecycleService, graphFactory, threadStateMapper, persistencePolicy, clock);
+                lifecycleService, graphFactory, threadStateMapper, persistencePolicy,
+                agentRegistry, clock);
     }
 
     @Bean

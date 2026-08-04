@@ -19,7 +19,6 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -131,7 +130,7 @@ public class ReactCheckpointService {
         // 补全 approval 中的 agentName 和 nodeName
         PendingApproval filledApproval = fillApprovalContext(approval, definition.name(), nodeName);
 
-        Map<String, Object> stateData = buildStateData(state, cursor, buffer, filledApproval, definition.name(), nodeName);
+        Map<String, Object> stateData = buildStateData(state, cursor, buffer);
 
         String checkpointId = checkpointIdGenerator.generate();
         Instant now = clock.instant();
@@ -141,7 +140,6 @@ public class ReactCheckpointService {
                 runContext.runId(),
                 runContext.threadId(),
                 runContext.userId(),
-                runContext.sessionId(),
                 CheckpointExecutionType.REACT_AGENT,
                 CheckpointPurpose.HITL_RECOVERY,
                 definition.name(),
@@ -202,7 +200,7 @@ public class ReactCheckpointService {
         // 补全 approval 中的 agentName 和 nodeName
         PendingApproval filledApproval = fillApprovalContext(approval, definition.name(), nodeName);
 
-        Map<String, Object> stateData = buildStateData(state, cursor, buffer, filledApproval, definition.name(), nodeName);
+        Map<String, Object> stateData = buildStateData(state, cursor, buffer);
 
         // 保持原 checkpointId（同一runId整个恢复生命周期保持原checkpointId）
         long expectedVersion = existingCp.version();
@@ -213,7 +211,6 @@ public class ReactCheckpointService {
                 existingCp.runId(),
                 existingCp.threadId(),
                 existingCp.userId(),
-                existingCp.sessionId(),
                 existingCp.executionType(),
                 existingCp.purpose(),       // HITL_RECOVERY 保持不变
                 existingCp.agentName(),
@@ -241,21 +238,25 @@ public class ReactCheckpointService {
     }
 
     /**
-     * 构造完整状态快照。
+     * 构造白名单状态快照。
+     * <p>
+     * 只包含恢复所必需的 key（见 {@link CheckpointPayloadBuilder}），
+     * 排除 RunContext、AgentDefinition 等可重建对象，
+     * 以及 PENDING_APPROVAL/RUN_STATUS/STOP_REASON/CHECKPOINT_ID 等恢复元数据
+     * （这些来自 Checkpoint 顶层，恢复时由 fromCheckpointForResume 注入）。
+     * <p>
+     * 仅 toolExecutionCursor 和 toolExecutionBuffer 使用传入参数覆盖当前 state 值，
+     * 以反映中断时的真实执行位置。
      */
     private Map<String, Object> buildStateData(ReactAgentState state,
                                                  int cursor,
-                                                 List<com.ksyun.agent.core.tool.ToolResult> buffer,
-                                                 PendingApproval approval,
-                                                 String agentName,
-                                                 String nodeName) {
-        Map<String, Object> stateData = new HashMap<>(state.data());
+                                                 List<com.ksyun.agent.core.tool.ToolResult> buffer) {
+        Map<String, Object> stateData = new java.util.LinkedHashMap<>(
+                CheckpointPayloadBuilder.buildWhitelistPayload(state));
+        // 覆盖为中断时的真实执行位置（恢复时从这里继续）
         stateData.put(ReactStateKeys.TOOL_EXECUTION_CURSOR, cursor);
         stateData.put(ReactStateKeys.TOOL_EXECUTION_BUFFER, buffer != null ? List.copyOf(buffer) : List.of());
-        stateData.put(ReactStateKeys.PENDING_APPROVAL, approval);
-        stateData.put(ReactStateKeys.RUN_STATUS, com.ksyun.agent.core.run.RunStatus.SUSPENDED);
-        stateData.put(ReactStateKeys.STOP_REASON, com.ksyun.agent.runtime.react.ReactStopReason.SUSPENDED);
-        return stateData;
+        return java.util.Collections.unmodifiableMap(stateData);
     }
 
     /**

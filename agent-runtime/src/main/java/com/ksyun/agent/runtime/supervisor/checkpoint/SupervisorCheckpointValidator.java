@@ -12,7 +12,6 @@ import com.ksyun.agent.core.supervisor.SupervisorChildExecutionStatus;
 import com.ksyun.agent.core.supervisor.SupervisorChildRunLink;
 import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
 import com.ksyun.agent.runtime.supervisor.SupervisorNodeNames;
-import com.ksyun.agent.runtime.supervisor.SupervisorStopReason;
 import com.ksyun.agent.runtime.supervisor.SupervisorStateKeys;
 
 import java.util.HashSet;
@@ -92,26 +91,9 @@ public class SupervisorCheckpointValidator {
                     "Supervisor checkpoint stateData must not be empty");
         }
 
-        // RUN_STATUS == SUSPENDED（保存时）
-        Object runStatusObj = stateData.get(SupervisorStateKeys.RUN_STATUS);
-        if (runStatusObj != RunStatus.SUSPENDED) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                    "Supervisor checkpoint RUN_STATUS must be SUSPENDED");
-        }
-
-        // STOP_REASON == SUSPENDED（保存时）
-        Object stopReasonObj = stateData.get(SupervisorStateKeys.STOP_REASON);
-        if (stopReasonObj != SupervisorStopReason.SUSPENDED) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                    "Supervisor checkpoint STOP_REASON must be SUSPENDED");
-        }
-
-        // CHECKPOINT_ID 与 checkpoint.checkpointId 一致
-        Object checkpointIdObj = stateData.get(SupervisorStateKeys.CHECKPOINT_ID);
-        if (checkpointIdObj == null || !checkpointIdObj.equals(checkpoint.checkpointId())) {
-            throw new AgentFrameworkException(AgentErrorCode.INVALID_ARGUMENT,
-                    "Supervisor checkpoint CHECKPOINT_ID must match checkpoint.checkpointId");
-        }
+        // 注：RUN_STATUS / STOP_REASON / CHECKPOINT_ID 不再进入白名单 payload。
+        // checkpoint.status()==SUSPENDED 已在上方校验，等价于保存时 runStatus==SUSPENDED。
+        // CHECKPOINT_ID 来自 checkpoint 顶层，无需从 stateData 重复校验。
 
         // DISPATCH_TASKS 非空
         @SuppressWarnings("unchecked")

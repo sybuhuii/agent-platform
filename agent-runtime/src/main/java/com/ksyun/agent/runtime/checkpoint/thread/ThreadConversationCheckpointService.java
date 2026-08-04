@@ -184,7 +184,6 @@ public class ThreadConversationCheckpointService {
                 runId,
                 threadId,
                 userId,
-                null,
                 state.executionType(),
                 CheckpointPurpose.THREAD_MEMORY,
                 state.participantName(),

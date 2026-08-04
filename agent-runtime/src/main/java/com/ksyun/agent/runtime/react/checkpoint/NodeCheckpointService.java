@@ -11,17 +11,14 @@ import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.run.RunContext;
-import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.store.CheckpointIdGenerator;
 import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.runtime.react.ReactAgentState;
 import com.ksyun.agent.runtime.react.ReactStateKeys;
-import com.ksyun.agent.runtime.react.ReactStopReason;
 import com.ksyun.agent.runtime.react.checkpoint.validator.CheckpointValidator;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -74,15 +71,13 @@ public final class NodeCheckpointService {
             AgentDefinition definition) {
         String checkpointId = checkpointIdGenerator.generate();
         Instant now = clock.instant();
-        Map<String, Object> stateData = buildStateData(
-                state, request, pendingApproval, checkpointId);
+        Map<String, Object> stateData = buildStateData(state, request);
 
         AgentCheckpoint checkpoint = new AgentCheckpoint(
                 checkpointId,
                 runContext.runId(),
                 runContext.threadId(),
                 runContext.userId(),
-                runContext.sessionId(),
                 CheckpointExecutionType.REACT_AGENT,
                 CheckpointPurpose.HITL_RECOVERY,
                 definition.name(),
@@ -128,15 +123,13 @@ public final class NodeCheckpointService {
 
         long expectedVersion = existing.version();
         Instant now = clock.instant();
-        Map<String, Object> stateData = buildStateData(
-                state, request, pendingApproval, existing.checkpointId());
+        Map<String, Object> stateData = buildStateData(state, request);
 
         AgentCheckpoint updated = new AgentCheckpoint(
                 existing.checkpointId(),
                 existing.runId(),
                 existing.threadId(),
                 existing.userId(),
-                existing.sessionId(),
                 existing.executionType(),
                 existing.purpose(),
                 existing.agentName(),
@@ -158,19 +151,25 @@ public final class NodeCheckpointService {
         return updated;
     }
 
+    /**
+     * 构造白名单状态快照。
+     * <p>
+     * 只包含恢复所必需的 key（见 {@link CheckpointPayloadBuilder}），
+     * 排除 RunContext、AgentDefinition 等可重建对象，
+     * 以及 PENDING_APPROVAL/RUN_STATUS/STOP_REASON/CHECKPOINT_ID 等恢复元数据
+     * （这些来自 Checkpoint 顶层，恢复时由 fromCheckpointForResume 注入）。
+     * <p>
+     * NODE 类型需要 nodeResumeHandlerKey 和 nodeResumeData，从 NodeInterruptRequest 注入。
+     */
     private Map<String, Object> buildStateData(
             ReactAgentState state,
-            NodeInterruptRequest request,
-            PendingApproval pendingApproval,
-            String checkpointId) {
-        Map<String, Object> stateData = new HashMap<>(state.data());
+            NodeInterruptRequest request) {
+        Map<String, Object> stateData = new java.util.LinkedHashMap<>(
+                CheckpointPayloadBuilder.buildWhitelistPayload(state));
+        // NODE 类型恢复数据，恢复时由对应节点 handler 使用
         stateData.put(ReactStateKeys.NODE_RESUME_HANDLER_KEY, request.resumeHandlerKey());
         stateData.put(ReactStateKeys.NODE_RESUME_DATA, request.resumeData());
-        stateData.put(ReactStateKeys.PENDING_APPROVAL, pendingApproval);
-        stateData.put(ReactStateKeys.CHECKPOINT_ID, checkpointId);
-        stateData.put(ReactStateKeys.RUN_STATUS, RunStatus.SUSPENDED);
-        stateData.put(ReactStateKeys.STOP_REASON, ReactStopReason.SUSPENDED);
-        return stateData;
+        return java.util.Collections.unmodifiableMap(stateData);
     }
 
     private void validateRequest(

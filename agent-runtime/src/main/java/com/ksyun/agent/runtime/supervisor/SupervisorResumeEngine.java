@@ -4,12 +4,15 @@ import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
 import com.ksyun.agent.core.run.AgentCheckpoint;
+import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.core.security.UserSession;
 import com.ksyun.agent.core.supervisor.SupervisorChildExecution;
 import com.ksyun.agent.core.supervisor.SupervisorChildExecutionStatus;
+import com.ksyun.agent.core.supervisor.SupervisorDefinition;
 import com.ksyun.agent.runtime.checkpoint.thread.ThreadConversationState;
 import com.ksyun.agent.runtime.react.ThreadExecutionOutcome;
+import com.ksyun.agent.runtime.registry.SupervisorRegistry;
 import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorCheckpointService;
 import com.ksyun.agent.runtime.supervisor.checkpoint.SupervisorCheckpointStateMapper;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -58,6 +61,7 @@ public class SupervisorResumeEngine {
     private final SupervisorThreadConversationStateMapper threadStateMapper;
     private final SupervisorThreadPersistencePolicy persistencePolicy;
     private final com.ksyun.agent.runtime.react.ReactResumeEngine reactResumeEngine;
+    private final SupervisorRegistry supervisorRegistry;
     private final Clock clock;
 
     public SupervisorResumeEngine(
@@ -67,6 +71,7 @@ public class SupervisorResumeEngine {
             SupervisorThreadConversationStateMapper threadStateMapper,
             SupervisorThreadPersistencePolicy persistencePolicy,
             com.ksyun.agent.runtime.react.ReactResumeEngine reactResumeEngine,
+            SupervisorRegistry supervisorRegistry,
             Clock clock) {
         this.checkpointService = Objects.requireNonNull(checkpointService);
         this.stateMapper = Objects.requireNonNull(stateMapper);
@@ -74,6 +79,7 @@ public class SupervisorResumeEngine {
         this.threadStateMapper = Objects.requireNonNull(threadStateMapper);
         this.persistencePolicy = Objects.requireNonNull(persistencePolicy);
         this.reactResumeEngine = Objects.requireNonNull(reactResumeEngine);
+        this.supervisorRegistry = Objects.requireNonNull(supervisorRegistry);
         this.clock = Objects.requireNonNull(clock);
     }
 
@@ -108,7 +114,19 @@ public class SupervisorResumeEngine {
         AgentResult finalResult;
         SupervisorAgentState finalState;
         try {
-            SupervisorAgentState resumeState = stateMapper.fromCheckpointForResume(resumingCheckpoint);
+            // 从注册中心重建 SupervisorDefinition
+            SupervisorDefinition definition = supervisorRegistry.find(resumingCheckpoint.agentName())
+                    .orElseThrow(() -> new AgentFrameworkException(AgentErrorCode.SUPERVISOR_NOT_FOUND,
+                            "Supervisor definition not found: " + resumingCheckpoint.agentName()));
+
+            // 从当前 UserSession 重建 RunContext（runId/threadId 取 Checkpoint 顶层）
+            RunContext runContext = new RunContext(
+                    operator.userId(), operator.sessionId(),
+                    resumingCheckpoint.threadId(), resumingCheckpoint.runId(),
+                    operator.roles(), operator.permissions());
+
+            SupervisorAgentState resumeState = stateMapper.fromCheckpointForResume(
+                    resumingCheckpoint, definition, runContext);
             resumeState = resumeSuspendedChildren(resumeState, operator);
 
             CompiledGraph<SupervisorAgentState> resumeGraph = graphFactory.buildResumeGraph();

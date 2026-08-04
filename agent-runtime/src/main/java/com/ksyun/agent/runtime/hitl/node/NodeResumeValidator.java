@@ -11,7 +11,6 @@ import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.CheckpointPurpose;
 import com.ksyun.agent.core.run.CheckpointStatus;
 import com.ksyun.agent.core.security.UserSession;
-import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.runtime.react.ReactStateKeys;
 
 import java.util.Map;
@@ -86,14 +85,8 @@ public final class NodeResumeValidator {
         if (!(resumeData instanceof NodeResumeData)) {
             throw notResumable("Node resume data is missing or invalid");
         }
-        Object contextValue = stateData.get(ReactStateKeys.RUN_CONTEXT);
-        if (!(contextValue instanceof RunContext context)
-                || !checkpoint.runId().equals(context.runId())
-                || !checkpoint.threadId().equals(context.threadId())
-                || !checkpoint.userId().equals(context.userId())
-                || !checkpoint.sessionId().equals(context.sessionId())) {
-            throw notResumable("Node RunContext identity does not match checkpoint");
-        }
+        // RunContext 不再持久化到 payload，恢复时由当前 UserSession 重建。
+        // runId/threadId/userId 一致性已由用户归属校验与 payload 身份校验覆盖。
     }
 
     private AgentFrameworkException notResumable(String message) {
