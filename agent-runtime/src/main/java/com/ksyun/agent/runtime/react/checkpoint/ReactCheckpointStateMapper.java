@@ -9,6 +9,8 @@ import com.ksyun.agent.core.run.AgentCheckpoint;
 import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.run.RunStatus;
 import com.ksyun.agent.runtime.react.ReactAgentState;
+import com.ksyun.agent.runtime.context.ContextWindowSnapshot;
+import com.ksyun.agent.runtime.context.ContextWindowSnapshotRestorer;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -98,21 +100,25 @@ public class ReactCheckpointStateMapper {
         resumeState.put(AGENT_DEFINITION, definition);
         resumeState.put(RUN_CONTEXT, runContext);
 
-        // 重建 System 消息：根据当前 Definition 重新创建一条，
-        // 再追加持久化的非 System 历史（payload 已过滤 System/MemoryContext）
+        // 使用当前 Definition 重建消息协议。
         resumeState.put(MESSAGES, rebuildMessages(definition, stateData));
 
-        // 恢复覆盖
-        resumeState.put(PENDING_APPROVAL, checkpoint.pendingApproval()); // 已决策版本
+        Object rawSnapshot = stateData.get(CONTEXT_WINDOW_SNAPSHOT);
+        if (rawSnapshot instanceof ContextWindowSnapshot snapshot) {
+            resumeState.put(
+                    CONTEXT_WINDOW_SNAPSHOT,
+                    ContextWindowSnapshotRestorer.forHitlResume(
+                            snapshot,
+                            definition.systemPrompt()));
+        }
+
+        resumeState.put(PENDING_APPROVAL, checkpoint.pendingApproval());
         resumeState.put(RUN_STATUS, RunStatus.RUNNING);
         resumeState.put(FINAL_RESULT, null);
         resumeState.put(STOP_REASON, null);
         resumeState.put(FAILURE_MESSAGE, null);
         resumeState.put(FAILURE_ERROR_CODE, null);
         resumeState.put(CHECKPOINT_ID, checkpoint.checkpointId());
-
-        // CONTEXT_WINDOW_SNAPSHOT 和 LATEST_CONTEXT_TRACE 保持（如果存在）
-
         return new ReactAgentState(resumeState);
     }
 

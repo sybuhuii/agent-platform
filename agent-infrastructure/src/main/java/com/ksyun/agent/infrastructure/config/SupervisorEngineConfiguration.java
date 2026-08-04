@@ -63,8 +63,10 @@ public class SupervisorEngineConfiguration {
     // --- Phase9 Batch3 新增：Supervisor Checkpoint Bean ---
 
     @Bean
-    public SupervisorCheckpointStateMapper supervisorCheckpointStateMapper() {
-        return new SupervisorCheckpointStateMapper();
+    public SupervisorCheckpointStateMapper supervisorCheckpointStateMapper(
+            SupervisorPromptBuilder promptBuilder
+    ) {
+        return new SupervisorCheckpointStateMapper(promptBuilder);
     }
 
     @Bean

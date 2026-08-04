@@ -50,7 +50,8 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
                         "/api/context/**",
                         "/api/auth/me",
                         "/api/auth/logout",
-                        "/api/auth/session"
+                        "/api/auth/session",
+                        "/api/conversations/**"
                 )
                 .excludePathPatterns(
                         "/api/auth/login",

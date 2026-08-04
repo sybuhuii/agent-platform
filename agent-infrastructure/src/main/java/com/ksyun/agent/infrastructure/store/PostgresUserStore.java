@@ -114,14 +114,23 @@ public class PostgresUserStore implements UserStore {
         if (userId == null || userId.isBlank()) {
             return Optional.empty();
         }
-        UserAccount account = jdbcTemplate.query(
+
+        UserRow row = jdbcTemplate.query(
                 "SELECT user_id, username, credential_hash, enabled FROM users WHERE user_id = ?",
-                rs -> rs.next() ? mapRow(rs) : null,
-                userId);
-        if (account == null) {
+                rs -> rs.next() ? mapUserRow(rs) : null,
+                userId
+        );
+
+        if (row == null) {
             return Optional.empty();
         }
-        return Optional.of(withRoles(account));
+
+        return Optional.of(
+                toUserAccount(
+                        row,
+                        queryRoles(row.userId())
+                )
+        );
     }
 
     @Override
@@ -129,40 +138,57 @@ public class PostgresUserStore implements UserStore {
         if (username == null || username.isBlank()) {
             return Optional.empty();
         }
+
         String normalized = UserAccount.normalizeUsername(username);
-        UserAccount account = jdbcTemplate.query(
+
+        UserRow row = jdbcTemplate.query(
                 "SELECT user_id, username, credential_hash, enabled FROM users WHERE username = ?",
-                rs -> rs.next() ? mapRow(rs) : null,
-                normalized);
-        if (account == null) {
+                rs -> rs.next() ? mapUserRow(rs) : null,
+                normalized
+        );
+
+        if (row == null) {
             return Optional.empty();
         }
-        return Optional.of(withRoles(account));
+
+        return Optional.of(
+                toUserAccount(
+                        row,
+                        queryRoles(row.userId())
+                )
+        );
     }
 
     @Override
     public Collection<UserAccount> list() {
-        List<UserAccount> users = jdbcTemplate.query(
+        List<UserRow> rows = jdbcTemplate.query(
                 "SELECT user_id, username, credential_hash, enabled FROM users ORDER BY user_id",
-                (rs, rowNum) -> mapRow(rs));
+                (rs, rowNum) -> mapUserRow(rs)
+        );
 
-        if (users.isEmpty()) {
+        if (rows.isEmpty()) {
             return List.of();
         }
 
-        // 批量查询角色避免 N+1
-        List<String> userIds = users.stream().map(UserAccount::userId).toList();
+        List<String> userIds = rows.stream()
+                .map(UserRow::userId)
+                .toList();
+
         Map<String, Set<String>> rolesMap = batchQueryRoles(userIds);
 
         List<UserAccount> result = new ArrayList<>();
-        for (UserAccount u : users) {
-            Set<String> roles = rolesMap.getOrDefault(u.userId(), Set.of());
-            result.add(new UserAccount(
-                    u.userId(), u.username(), u.credentialHash(), roles, u.enabled()));
+
+        for (UserRow row : rows) {
+            result.add(
+                    toUserAccount(
+                            row,
+                            rolesMap.getOrDefault(row.userId(), Set.of())
+                    )
+            );
         }
+
         return Collections.unmodifiableList(result);
     }
-
     @Override
     public boolean existsByUsername(String username) {
         if (username == null || username.isBlank()) {
@@ -177,23 +203,46 @@ public class PostgresUserStore implements UserStore {
 
     // ---- 内部方法 ----
 
-    private UserAccount mapRow(java.sql.ResultSet rs) throws java.sql.SQLException {
-        return new UserAccount(
+    private UserRow mapUserRow(java.sql.ResultSet rs)
+            throws java.sql.SQLException {
+
+        return new UserRow(
                 rs.getString("user_id"),
                 rs.getString("username"),
                 rs.getString("credential_hash"),
-                Set.of(),
-                rs.getBoolean("enabled"));
+                rs.getBoolean("enabled")
+        );
     }
 
-    private UserAccount withRoles(UserAccount account) {
+    private Set<String> queryRoles(String userId) {
         List<String> roles = jdbcTemplate.queryForList(
-                "SELECT role_name FROM user_roles WHERE user_id = ?",
-                String.class, account.userId());
-        Set<String> roleSet = Set.copyOf(roles);
+                "SELECT role_name FROM user_roles WHERE user_id = ? ORDER BY role_name",
+                String.class,
+                userId
+        );
+
+        return Set.copyOf(roles);
+    }
+
+    private UserAccount toUserAccount(
+            UserRow row,
+            Set<String> roleNames
+    ) {
         return new UserAccount(
-                account.userId(), account.username(),
-                account.credentialHash(), roleSet, account.enabled());
+                row.userId(),
+                row.username(),
+                row.credentialHash(),
+                roleNames,
+                row.enabled()
+        );
+    }
+
+    private record UserRow(
+            String userId,
+            String username,
+            String credentialHash,
+            boolean enabled
+    ) {
     }
 
     private void batchInsertRoles(String userId, Set<String> roleNames) {

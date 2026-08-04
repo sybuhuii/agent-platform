@@ -138,7 +138,8 @@ public class GlobalExceptionHandler {
                  THREAD_BUSY, THREAD_SUSPENDED -> HttpStatus.CONFLICT;
 
             // 502 Bad Gateway
-            case MODEL_INVOCATION_FAILED -> HttpStatus.BAD_GATEWAY;
+            case MODEL_INVOCATION_FAILED,
+                 INVALID_SUPERVISOR_DECISION -> HttpStatus.BAD_GATEWAY;
 
             // 503 Service Unavailable
             case MODEL_NOT_AVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
