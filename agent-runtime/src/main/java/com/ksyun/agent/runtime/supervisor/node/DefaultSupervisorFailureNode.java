@@ -62,10 +62,16 @@ public class DefaultSupervisorFailureNode implements SupervisorFailureNode {
 
     private String mapErrorCode(AgentErrorCode errorCode) {
         return switch (errorCode) {
-            case MODEL_INVOCATION_FAILED -> AgentErrorCode.MODEL_INVOCATION_FAILED.name();
-            case AGENT_NOT_FOUND -> AgentErrorCode.AGENT_NOT_FOUND.name();
-            case MAX_ITERATIONS_REACHED -> AgentErrorCode.MAX_ITERATIONS_REACHED.name();
-            case INTERNAL_ERROR -> AgentErrorCode.INTERNAL_ERROR.name();
+            case MODEL_INVOCATION_FAILED ->
+                    AgentErrorCode.MODEL_INVOCATION_FAILED.name();
+            case INVALID_SUPERVISOR_DECISION ->
+                    AgentErrorCode.INVALID_SUPERVISOR_DECISION.name();
+            case AGENT_NOT_FOUND ->
+                    AgentErrorCode.AGENT_NOT_FOUND.name();
+            case MAX_ITERATIONS_REACHED ->
+                    AgentErrorCode.MAX_ITERATIONS_REACHED.name();
+            case INTERNAL_ERROR ->
+                    AgentErrorCode.INTERNAL_ERROR.name();
             default -> AgentErrorCode.INTERNAL_ERROR.name();
         };
     }

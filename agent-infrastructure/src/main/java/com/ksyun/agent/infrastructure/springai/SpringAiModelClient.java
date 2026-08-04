@@ -11,10 +11,11 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.ResponseFormat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,11 +46,11 @@ public class SpringAiModelClient implements ModelClient {
 
     private static final Logger log = LoggerFactory.getLogger(SpringAiModelClient.class);
 
-    /** 允许的 options 键 */
     private static final String OPTION_MODEL = "model";
     private static final String OPTION_TEMPERATURE = "temperature";
     private static final String OPTION_MAX_TOKENS = "maxTokens";
-
+    private static final String OPTION_RESPONSE_FORMAT = "responseFormat";
+    private static final String RESPONSE_FORMAT_JSON_OBJECT = "json_object";
     /** temperature 合理范围 */
     private static final double TEMPERATURE_MIN = 0.0;
     private static final double TEMPERATURE_MAX = 2.0;
@@ -146,18 +147,13 @@ public class SpringAiModelClient implements ModelClient {
             Map<String, Object> options,
             List<ToolCallback> toolCallbacks
     ) {
-        ToolCallingChatOptions.Builder optionsBuilder =
-                ToolCallingChatOptions.builder();
+        OpenAiChatOptions.Builder optionsBuilder =
+                OpenAiChatOptions.builder();
 
-        /*
-         * 必须显式关闭 Spring AI 内部工具执行。
-         */
         optionsBuilder.internalToolExecutionEnabled(false);
 
-        if (toolCallbacks != null
-                && !toolCallbacks.isEmpty()) {
-            optionsBuilder.toolCallbacks(
-                    List.copyOf(toolCallbacks));
+        if (toolCallbacks != null && !toolCallbacks.isEmpty()) {
+            optionsBuilder.toolCallbacks(List.copyOf(toolCallbacks));
         }
 
         if (options != null && !options.isEmpty()) {
@@ -166,7 +162,6 @@ public class SpringAiModelClient implements ModelClient {
 
         return optionsBuilder.build();
     }
-
     /**
      * 应用安全的模型选项。
      * <p>
@@ -177,7 +172,7 @@ public class SpringAiModelClient implements ModelClient {
      * ToolCallback 或内部工具执行开关。
      */
     private void applySafeOptions(
-            ToolCallingChatOptions.Builder builder,
+            OpenAiChatOptions.Builder builder,
             Map<String, Object> options
     ) {
         for (Map.Entry<String, Object> entry : options.entrySet()) {
@@ -206,6 +201,19 @@ public class SpringAiModelClient implements ModelClient {
                 case OPTION_MAX_TOKENS -> {
                     int maxTokens = validateMaxTokens(value);
                     builder.maxTokens(maxTokens);
+                }
+                case OPTION_RESPONSE_FORMAT -> {
+                    if (!(value instanceof String responseFormat)
+                            || !RESPONSE_FORMAT_JSON_OBJECT.equals(responseFormat)) {
+                        throw new AgentFrameworkException(
+                                AgentErrorCode.INVALID_ARGUMENT,
+                                "Option 'responseFormat' only supports 'json_object'");
+                    }
+
+                    builder.responseFormat(
+                            ResponseFormat.builder()
+                                    .type(ResponseFormat.Type.JSON_OBJECT)
+                                    .build());
                 }
                 default -> {
                     // 忽略或拒绝未知选项，行为明确且有日志

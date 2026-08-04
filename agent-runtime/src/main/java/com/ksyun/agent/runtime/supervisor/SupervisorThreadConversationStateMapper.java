@@ -15,6 +15,7 @@ import com.ksyun.agent.runtime.context.ContextWindowSnapshot;
 import com.ksyun.agent.core.context.ContextProcessingTrace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.ksyun.agent.runtime.context.ContextWindowSnapshotRestorer;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -210,9 +211,13 @@ public class SupervisorThreadConversationStateMapper {
         continuedState.put(FAILURE_ERROR_CODE, null);
 
         // 恢复 previousState.contextWindowSnapshot
-        continuedState.put(CONTEXT_WINDOW_SNAPSHOT,
-                previousState.contextWindowSnapshot().orElse(null));
-        // 恢复 previousState.latestContextTrace
+        ContextWindowSnapshot restoredSnapshot = previousState.contextWindowSnapshot()
+                .map(snapshot -> ContextWindowSnapshotRestorer.forThreadContinuation(
+                        snapshot,
+                        systemPrompt))
+                .orElse(null);
+
+        continuedState.put(CONTEXT_WINDOW_SNAPSHOT, restoredSnapshot);
         continuedState.put(LATEST_CONTEXT_TRACE,
                 previousState.latestContextTrace().orElse(null));
 

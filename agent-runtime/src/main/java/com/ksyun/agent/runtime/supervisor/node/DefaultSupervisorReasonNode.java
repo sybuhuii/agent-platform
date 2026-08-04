@@ -138,7 +138,12 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
         }
 
         // 构造 ModelRequest：tools 必须为空
-        ModelRequest request = new ModelRequest(modelMessages, List.of(), Map.of());
+        ModelRequest request = new ModelRequest(
+                modelMessages,
+                List.of(),
+                Map.of(
+                        "temperature", 0.0d,
+                        "responseFormat", "json_object"));
 
         // 调用模型
         ModelResponse response;
@@ -198,14 +203,21 @@ public class DefaultSupervisorReasonNode implements SupervisorReasonNode {
         try {
             draft = decisionParser.parse(content);
         } catch (AgentFrameworkException e) {
-            log.error("SupervisorReason decision parse failed: runId={}, supervisor={}, iteration={}",
-                    runContext.runId(), definition.name(), iteration);
-            Map<String, Object> result = new java.util.HashMap<>();
+            log.warn(
+                    "Supervisor decision rejected: runId={}, supervisor={}, iteration={}, errorCode={}",
+                    runContext.runId(),
+                    definition.name(),
+                    iteration,
+                    e.getErrorCode());
+
+            Map<String, Object> result = new HashMap<>();
             result.put(SUPERVISOR_MESSAGES, newMessages);
             result.put(ITERATION, newIteration);
             result.put(STOP_REASON, SupervisorStopReason.MODEL_ERROR);
-            result.put(FAILURE_ERROR_CODE, AgentErrorCode.MODEL_INVOCATION_FAILED);
-            result.put(FAILURE_MESSAGE, "Supervisor decision parse failed");
+            result.put(FAILURE_ERROR_CODE,
+                    AgentErrorCode.INVALID_SUPERVISOR_DECISION);
+            result.put(FAILURE_MESSAGE,
+                    "Supervisor returned an invalid structured decision");
             if (memoryTrace != null) {
                 result.put(LATEST_MEMORY_CONTEXT_TRACE, memoryTrace);
             }

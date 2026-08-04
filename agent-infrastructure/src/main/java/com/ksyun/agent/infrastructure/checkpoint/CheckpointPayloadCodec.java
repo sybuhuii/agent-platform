@@ -22,6 +22,8 @@ import com.ksyun.agent.core.context.ContextProcessingTrace;
 import com.ksyun.agent.core.context.ContextTrimDiagnostic;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
+import com.ksyun.agent.core.message.MemoryContextAgentMessage;
+import com.ksyun.agent.core.message.SystemAgentMessage;
 import com.ksyun.agent.core.message.AgentMessage;
 import com.ksyun.agent.core.message.AssistantAgentMessage;
 import com.ksyun.agent.core.message.SummaryAgentMessage;
@@ -759,14 +761,31 @@ public class CheckpointPayloadCodec {
         return m;
     }
 
-    private Map<String, Object> encodeContextWindowSnapshot(ContextWindowSnapshot snapshot) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("windowMessages", encodeMessageList(snapshot.windowMessages()));
-        m.put("consumedHistoryMessageCount", snapshot.consumedHistoryMessageCount());
-        m.put("processingSequence", snapshot.processingSequence());
-        m.put("latestTrace", encodeContextProcessingTrace(snapshot.latestTrace()));
-        m.put("updatedAt", snapshot.updatedAt().toString());
-        return m;
+    private Map<String, Object> encodeContextWindowSnapshot(
+            ContextWindowSnapshot snapshot
+    ) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+
+        List<AgentMessage> safeWindowMessages = snapshot.windowMessages().stream()
+                .filter(message -> !(message instanceof SystemAgentMessage))
+                .filter(message -> !(message instanceof MemoryContextAgentMessage))
+                .toList();
+
+        payload.put("windowMessages", encodeMessageList(safeWindowMessages));
+
+        /*
+         * THREAD_MEMORY 的 consumed 数量仍然表示原完整历史中的位置，
+         * 其中包含运行时重建的 System 消息位置。
+         * ContextWindowSnapshotRestorer.forThreadContinuation 会补回当前 System 消息，
+         * 因此这里不能减少 consumedHistoryMessageCount。
+         */
+        payload.put("consumedHistoryMessageCount",
+                snapshot.consumedHistoryMessageCount());
+        payload.put("processingSequence", snapshot.processingSequence());
+        payload.put("latestTrace",
+                encodeContextProcessingTrace(snapshot.latestTrace()));
+        payload.put("updatedAt", snapshot.updatedAt().toString());
+        return payload;
     }
 
     private Map<String, Object> encodeContextProcessingTrace(ContextProcessingTrace trace) {
