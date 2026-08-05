@@ -170,7 +170,8 @@ export const conversationThreadSchema = z.object({
   title: z.string(),
   pinned: z.boolean(),
   archived: z.boolean(),
-  agentName: z.string().nullable(),
+  participantType: z.enum(['AGENT', 'SUPERVISOR']),
+  participantName: z.string(),
   createdAtEpochMillis: z.number(),
   lastMessageAtEpochMillis: z.number()
 })
@@ -180,5 +181,23 @@ export const conversationMessageSchema = z.object({
   sequenceNo: z.number(),
   role: z.enum(['USER', 'ASSISTANT']),
   content: z.string(),
+  runId: z.string(),
+  success: z.boolean().nullable(),
+  errorCode: z.string().nullable(),
+  runStatus: z.enum(['CREATED', 'RUNNING', 'INTERRUPTED', 'SUSPENDED', 'COMPLETED', 'FAILED']).nullable(),
   createdAtEpochMillis: z.number()
+})
+
+export const conversationThreadPageSchema = z.object({
+  items: z.array(conversationThreadSchema),
+  hasMore: z.boolean(),
+  nextCursorPinned: z.boolean().nullable(),
+  nextCursorLastMessageAt: z.number().nullable(),
+  nextCursorThreadId: z.string().nullable()
+})
+
+export const conversationMessagePageSchema = z.object({
+  items: z.array(conversationMessageSchema),
+  hasMore: z.boolean(),
+  nextBeforeSequence: z.number().nullable()
 })

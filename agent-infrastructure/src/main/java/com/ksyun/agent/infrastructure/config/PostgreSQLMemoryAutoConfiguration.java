@@ -48,6 +48,8 @@ public class PostgreSQLMemoryAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(MemoryStore.class)
+    @ConditionalOnProperty(
+            name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
     public MemoryStore memoryStore(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         return new PostgresMemoryStore(jdbcTemplate, objectMapper);
     }

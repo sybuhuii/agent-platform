@@ -17,7 +17,8 @@ public record ConversationThread(
         String title,
         boolean pinned,
         boolean archived,
-        String agentName,
+        ConversationParticipantType participantType,
+        String participantName,
         Instant createdAt,
         Instant lastMessageAt,
         Instant updatedAt
@@ -27,15 +28,22 @@ public record ConversationThread(
         Objects.requireNonNull(threadId, "threadId must not be null");
         Objects.requireNonNull(userId, "userId must not be null");
         Objects.requireNonNull(createdAt, "createdAt must not be null");
+        Objects.requireNonNull(lastMessageAt, "lastMessageAt must not be null");
+        Objects.requireNonNull(updatedAt, "updatedAt must not be null");
+        Objects.requireNonNull(participantType, "participantType must not be null");
+        Objects.requireNonNull(participantName, "participantName must not be null");
         if (threadId.isBlank()) {
             throw new IllegalArgumentException("threadId must not be blank");
         }
         if (userId.isBlank()) {
             throw new IllegalArgumentException("userId must not be blank");
         }
-        title = title == null ? "" : title;
+        title = title == null ? "" : title.trim();
         threadId = threadId.trim();
         userId = userId.trim();
-        agentName = agentName == null ? null : agentName.trim();
+        participantName = participantName.trim();
+        if (participantName.isEmpty()) {
+            throw new IllegalArgumentException("participantName must not be blank");
+        }
     }
 }

@@ -10,6 +10,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.time.Clock;
+
 /**
  * PostgreSQL 会话历史自动配置。
  * <p>
@@ -24,7 +26,8 @@ public class PostgreSQLConversationAutoConfiguration {
     @ConditionalOnMissingBean(ConversationStore.class)
     public ConversationStore conversationStore(JdbcTemplate jdbcTemplate,
                                                 PlatformTransactionManager transactionManager,
-                                                MessageIdGenerator messageIdGenerator) {
-        return new PostgresConversationStore(jdbcTemplate, transactionManager, messageIdGenerator);
+                                                MessageIdGenerator messageIdGenerator,
+                                                Clock clock) {
+        return new PostgresConversationStore(jdbcTemplate, transactionManager, messageIdGenerator, clock);
     }
 }

@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -81,24 +82,15 @@ public class PostgresRoleStore implements RoleStore {
             );
         }
 
-        Boolean exists = transactionTemplate.execute(status -> {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM roles WHERE role_name = ?",
-                    Integer.class, role.roleName());
-            return count != null && count > 0;
-        });
-
-        if (!Boolean.TRUE.equals(exists)) {
-            throw new AgentFrameworkException(
-                    AgentErrorCode.ROLE_NOT_FOUND,
-                    "Role not found for update: " + role.roleName()
-            );
-        }
-
         transactionTemplate.executeWithoutResult(status -> {
-            jdbcTemplate.update(
+            int affected = jdbcTemplate.update(
                     "UPDATE roles SET description = ? WHERE role_name = ?",
                     role.description(), role.roleName());
+            if (affected == 0) {
+                throw new AgentFrameworkException(
+                        AgentErrorCode.ROLE_NOT_FOUND,
+                        "Role not found for update: " + role.roleName());
+            }
             // 原子替换权限集合
             jdbcTemplate.update(
                     "DELETE FROM role_permissions WHERE role_name = ?",
@@ -115,17 +107,13 @@ public class PostgresRoleStore implements RoleStore {
             return Optional.empty();
         }
 
-        String description = jdbcTemplate.query(
-                "SELECT description FROM roles WHERE role_name = ?",
-                rs -> rs.next() ? rs.getString("description") : null,
-                roleName);
+        RoleDefinition role = jdbcTemplate.query(
+                "SELECT r.role_name, r.description, rp.permission_code "
+                        + "FROM roles r LEFT JOIN role_permissions rp ON rp.role_name = r.role_name "
+                        + "WHERE r.role_name = ?",
+                (ResultSetExtractor<RoleDefinition>) this::mapSingleRole, roleName);
 
-        if (description == null && !roleExists(roleName)) {
-            return Optional.empty();
-        }
-
-        Set<String> permissions = queryPermissions(roleName);
-        return Optional.of(new RoleDefinition(roleName, description, permissions));
+        return Optional.ofNullable(role);
     }
 
     @Override
@@ -140,29 +128,23 @@ public class PostgresRoleStore implements RoleStore {
 
     @Override
     public Collection<RoleDefinition> list() {
-        // 一次性查询所有角色和权限，避免 N+1
-        List<String> roleNames = jdbcTemplate.queryForList(
-                "SELECT role_name FROM roles ORDER BY role_name",
-                String.class);
-
-        if (roleNames.isEmpty()) {
-            return List.of();
-        }
-
-        // 批量查询所有角色的权限
-        Map<String, Set<String>> permissionsMap = batchQueryPermissions(roleNames);
-
-        // 查询描述
-        List<RoleDefinition> result = new ArrayList<>();
-        for (String rn : roleNames) {
-            String desc = jdbcTemplate.query(
-                    "SELECT description FROM roles WHERE role_name = ?",
-                    rs -> rs.next() ? rs.getString("description") : null,
-                    rn);
-            result.add(new RoleDefinition(rn, desc, permissionsMap.getOrDefault(rn, Set.of())));
-        }
-
-        return Collections.unmodifiableList(result);
+        Map<String, RoleAccumulator> roles = new java.util.LinkedHashMap<>();
+        jdbcTemplate.query(
+                "SELECT r.role_name, r.description, rp.permission_code "
+                        + "FROM roles r LEFT JOIN role_permissions rp ON rp.role_name = r.role_name "
+                        + "ORDER BY r.role_name, rp.permission_code",
+                rs -> {
+                    String roleName = rs.getString("role_name");
+                    String description = rs.getString("description");
+                    RoleAccumulator accumulator = roles.computeIfAbsent(roleName,
+                            ignored -> new RoleAccumulator(description));
+                    String permission = rs.getString("permission_code");
+                    if (permission != null) accumulator.permissions.add(permission);
+                });
+        return roles.entrySet().stream()
+                .map(entry -> new RoleDefinition(entry.getKey(), entry.getValue().description,
+                        Set.copyOf(entry.getValue().permissions)))
+                .toList();
     }
 
     // ---- 内部方法 ----
@@ -209,5 +191,26 @@ public class PostgresRoleStore implements RoleStore {
         Map<String, Set<String>> immutable = new HashMap<>();
         result.forEach((k, v) -> immutable.put(k, Set.copyOf(v)));
         return immutable;
+    }
+
+    private RoleDefinition mapSingleRole(java.sql.ResultSet rs) throws java.sql.SQLException {
+        if (!rs.next()) return null;
+        String roleName = rs.getString("role_name");
+        String description = rs.getString("description");
+        Set<String> permissions = new HashSet<>();
+        do {
+            String permission = rs.getString("permission_code");
+            if (permission != null) permissions.add(permission);
+        } while (rs.next());
+        return new RoleDefinition(roleName, description, Set.copyOf(permissions));
+    }
+
+    private static final class RoleAccumulator {
+        private final String description;
+        private final Set<String> permissions = new HashSet<>();
+
+        private RoleAccumulator(String description) {
+            this.description = description;
+        }
     }
 }

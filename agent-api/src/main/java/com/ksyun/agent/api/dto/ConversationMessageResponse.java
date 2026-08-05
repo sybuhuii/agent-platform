@@ -8,5 +8,9 @@ public record ConversationMessageResponse(
         long sequenceNo,
         String role,
         String content,
+        String runId,
+        Boolean success,
+        String errorCode,
+        String runStatus,
         long createdAtEpochMillis
 ) {}

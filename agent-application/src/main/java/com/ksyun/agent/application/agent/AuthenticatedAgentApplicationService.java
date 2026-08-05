@@ -1,10 +1,12 @@
 package com.ksyun.agent.application.agent;
 
+import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
 import com.ksyun.agent.core.agent.AgentDefinition;
 import com.ksyun.agent.core.agent.AgentResult;
 import com.ksyun.agent.core.agent.AgentTask;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
+import com.ksyun.agent.core.conversation.ConversationParticipantType;
 import com.ksyun.agent.core.run.CheckpointExecutionType;
 import com.ksyun.agent.core.run.RunContext;
 import com.ksyun.agent.core.run.ThreadIdGenerator;
@@ -52,6 +54,7 @@ public class AuthenticatedAgentApplicationService {
     private final ThreadIdValidator threadIdValidator;
     private final ThreadConversationCheckpointService threadConversationCheckpointService;
     private final ThreadExecutionCoordinator threadExecutionCoordinator;
+    private final ConversationHistoryApplicationService conversationHistoryApplicationService;
 
     public AuthenticatedAgentApplicationService(AgentRegistry agentRegistry,
                                                   ReactAgentEngine reactAgentEngine,
@@ -59,7 +62,8 @@ public class AuthenticatedAgentApplicationService {
                                                   ThreadIdGenerator threadIdGenerator,
                                                   ThreadIdValidator threadIdValidator,
                                                   ThreadConversationCheckpointService threadConversationCheckpointService,
-                                                  ThreadExecutionCoordinator threadExecutionCoordinator) {
+                                                  ThreadExecutionCoordinator threadExecutionCoordinator,
+                                                  ConversationHistoryApplicationService conversationHistoryApplicationService) {
         this.agentRegistry = agentRegistry;
         this.reactAgentEngine = reactAgentEngine;
         this.runIdGenerator = runIdGenerator;
@@ -67,6 +71,7 @@ public class AuthenticatedAgentApplicationService {
         this.threadIdValidator = threadIdValidator;
         this.threadConversationCheckpointService = threadConversationCheckpointService;
         this.threadExecutionCoordinator = threadExecutionCoordinator;
+        this.conversationHistoryApplicationService = conversationHistoryApplicationService;
     }
 
     /**
@@ -159,6 +164,8 @@ public class AuthenticatedAgentApplicationService {
             Optional<ThreadConversationState> previousState = Optional.empty();
 
             if (continuation) {
+                conversationHistoryApplicationService.validateContinuationIfPresent(
+                        session, threadId, ConversationParticipantType.AGENT, agentName);
                 previousState = threadConversationCheckpointService.load(
                         session.userId(),
                         threadId,
@@ -250,6 +257,10 @@ public class AuthenticatedAgentApplicationService {
             log.info("No stable state to save: runId={}, threadId={}, resultStatus={}",
                     runId, threadId, result.status());
         }
+
+        conversationHistoryApplicationService.recordRound(
+                session, threadId, ConversationParticipantType.AGENT,
+                definition.name(), message, runId, result);
 
         // ---- 返回 ----
         return new AuthenticatedAgentRunResult(runId, threadId, definition.name(), result);

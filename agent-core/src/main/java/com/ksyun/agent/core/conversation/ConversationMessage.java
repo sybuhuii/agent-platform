@@ -2,6 +2,7 @@ package com.ksyun.agent.core.conversation;
 
 import java.time.Instant;
 import java.util.Objects;
+import com.ksyun.agent.core.run.RunStatus;
 
 /**
  * 用户可见的会话历史消息，不可变。
@@ -19,6 +20,10 @@ public record ConversationMessage(
         long sequenceNo,
         ConversationMessageRole role,
         String content,
+        String runId,
+        Boolean success,
+        String errorCode,
+        RunStatus runStatus,
         String deduplicationKey,
         Instant createdAt
 ) {
@@ -44,6 +49,19 @@ public record ConversationMessage(
         messageId = messageId.trim();
         threadId = threadId.trim();
         content = content.trim();
+        runId = runId == null ? null : runId.trim();
+        errorCode = errorCode == null || errorCode.isBlank() ? null : errorCode.trim();
         deduplicationKey = deduplicationKey == null ? null : deduplicationKey.trim();
+        if (runId == null || runId.isEmpty()) {
+            throw new IllegalArgumentException("runId must not be blank");
+        }
+        if (role == ConversationMessageRole.USER
+                && (success != null || errorCode != null || runStatus != null)) {
+            throw new IllegalArgumentException("USER message must not contain result metadata");
+        }
+        if (role == ConversationMessageRole.ASSISTANT
+                && (success == null || runStatus == null)) {
+            throw new IllegalArgumentException("ASSISTANT message requires result metadata");
+        }
     }
 }

@@ -52,7 +52,7 @@ public class PostgresToolAuditStore implements ToolAuditStore {
                     + "audit_id, run_id, thread_id, user_id, tool_call_id, tool_name, "
                     + "argument_key_summary, authorized, status, success, error_code, "
                     + "started_at, completed_at, duration_ms, created_at, updated_at"
-                    + ") VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, 'STARTED', NULL, NULL, ?, NULL, NULL, ?, ?) "
+                    + ") VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, 'STARTED', NULL, NULL, ?, NULL, NULL, ?, ?) "
                     + "ON CONFLICT (audit_id) DO NOTHING";
 
     private static final String SELECT_BY_AUDIT_ID_SQL =

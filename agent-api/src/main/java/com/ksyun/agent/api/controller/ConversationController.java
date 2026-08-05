@@ -1,10 +1,14 @@
 package com.ksyun.agent.api.controller;
 
 import com.ksyun.agent.api.dto.ConversationMessageResponse;
+import com.ksyun.agent.api.dto.ConversationMessagePageResponse;
 import com.ksyun.agent.api.dto.ConversationThreadResponse;
+import com.ksyun.agent.api.dto.ConversationThreadPageResponse;
 import com.ksyun.agent.api.dto.RenameThreadRequest;
 import com.ksyun.agent.api.security.AuthenticatedSessionAttributes;
 import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
+import com.ksyun.agent.application.conversation.ConversationMessagePage;
+import com.ksyun.agent.application.conversation.ConversationThreadPage;
 import com.ksyun.agent.core.conversation.ConversationMessage;
 import com.ksyun.agent.core.conversation.ConversationThread;
 import com.ksyun.agent.core.exception.AgentErrorCode;
@@ -40,27 +44,33 @@ public class ConversationController {
     }
 
     @GetMapping
-    public List<ConversationThreadResponse> listThreads(
+    public ConversationThreadPageResponse listThreads(
             @RequestAttribute(AuthenticatedSessionAttributes.SESSION) UserSession session,
+            @RequestParam(required = false) Boolean cursorPinned,
             @RequestParam(required = false) String cursorThreadId,
             @RequestParam(required = false) Long cursorLastMessageAt,
             @RequestParam(required = false, defaultValue = "50") Integer pageSize) {
         ConversationHistoryApplicationService service = requireService();
-        List<ConversationThread> threads = service.listThreads(
-                session, cursorThreadId, cursorLastMessageAt, pageSize);
-        return threads.stream().map(this::toThreadResponse).toList();
+        ConversationThreadPage page = service.listThreads(
+                session, cursorPinned, cursorThreadId, cursorLastMessageAt, pageSize);
+        return new ConversationThreadPageResponse(
+                page.items().stream().map(this::toThreadResponse).toList(),
+                page.hasMore(), page.nextCursorPinned(),
+                page.nextCursorLastMessageAt(), page.nextCursorThreadId());
     }
 
     @GetMapping("/{threadId}/messages")
-    public List<ConversationMessageResponse> listMessages(
+    public ConversationMessagePageResponse listMessages(
             @RequestAttribute(AuthenticatedSessionAttributes.SESSION) UserSession session,
             @PathVariable String threadId,
             @RequestParam(required = false) Long beforeSequence,
             @RequestParam(required = false, defaultValue = "50") Integer pageSize) {
         ConversationHistoryApplicationService service = requireService();
-        List<ConversationMessage> messages = service.listMessages(
+        ConversationMessagePage page = service.listMessages(
                 session, threadId, beforeSequence, pageSize);
-        return messages.stream().map(this::toMessageResponse).toList();
+        return new ConversationMessagePageResponse(
+                page.items().stream().map(this::toMessageResponse).toList(),
+                page.hasMore(), page.nextBeforeSequence());
     }
 
     @PutMapping("/{threadId}/rename")
@@ -112,7 +122,8 @@ public class ConversationController {
                 t.title(),
                 t.pinned(),
                 t.archived(),
-                t.agentName(),
+                t.participantType().name(),
+                t.participantName(),
                 t.createdAt().toEpochMilli(),
                 t.lastMessageAt().toEpochMilli()
         );
@@ -124,6 +135,10 @@ public class ConversationController {
                 m.sequenceNo(),
                 m.role().name(),
                 m.content(),
+                m.runId(),
+                m.success(),
+                m.errorCode(),
+                m.runStatus() == null ? null : m.runStatus().name(),
                 m.createdAt().toEpochMilli()
         );
     }

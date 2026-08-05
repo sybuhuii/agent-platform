@@ -1,6 +1,7 @@
 package com.ksyun.agent.infrastructure.config;
 
 import com.ksyun.agent.application.agent.AuthenticatedAgentApplicationService;
+import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
 import com.ksyun.agent.application.auth.AuthApplicationService;
 import com.ksyun.agent.application.auth.PermissionAuthorizationService;
 import com.ksyun.agent.application.auth.RoleManagementApplicationService;
@@ -209,12 +210,14 @@ public class SecurityConfiguration {
             ReactAgentEngine reactAgentEngine,
             RunIdGenerator runIdGenerator,
             ThreadIdGenerator threadIdGenerator,
-            ThreadIdValidator threadIdValidator,
-            ThreadConversationCheckpointService threadConversationCheckpointService,
-            ThreadExecutionCoordinator threadExecutionCoordinator) {
+              ThreadIdValidator threadIdValidator,
+              ThreadConversationCheckpointService threadConversationCheckpointService,
+              ThreadExecutionCoordinator threadExecutionCoordinator,
+              ConversationHistoryApplicationService conversationHistoryApplicationService) {
         return new AuthenticatedAgentApplicationService(
                 agentRegistry, reactAgentEngine, runIdGenerator,
-                threadIdGenerator, threadIdValidator,
-                threadConversationCheckpointService, threadExecutionCoordinator);
+                  threadIdGenerator, threadIdValidator,
+                  threadConversationCheckpointService, threadExecutionCoordinator,
+                  conversationHistoryApplicationService);
     }
 }

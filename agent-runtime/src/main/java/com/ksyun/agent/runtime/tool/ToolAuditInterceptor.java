@@ -32,7 +32,7 @@ import java.util.Set;
  *   <li>终态记录（SUCCEEDED/FAILED/SUSPENDED/EXCEPTION）在结果确定后写入。</li>
  *   <li>authorized 字段：STARTED 时为 false（尚未经过 ACL）；
  *       终态时根据结果判断——PERMISSION_DENIED 为 false，其他为 true。</li>
- *   <li>审计写入失败只记录日志，不阻塞工具执行。</li>
+ *   <li>STARTED 写入失败时拒绝执行工具；终态写入失败记录服务端错误，避免重复执行已发生的副作用。</li>
  * </ul>
  * <p>
  * 不记录完整参数值、Session、权限集合、工具完整结果或 stateData。
@@ -103,9 +103,12 @@ public class ToolAuditInterceptor implements ToolInterceptor {
         try {
             auditStore.start(started);
         } catch (Exception e) {
-            // 审计失败不阻塞工具执行
             log.error("Failed to write audit STARTED record: auditId={}, toolName={}, runId={}",
                     auditId, toolName, runId, e);
+            throw new AgentFrameworkException(
+                    AgentErrorCode.INTERNAL_ERROR,
+                    "Tool execution was blocked because its audit record could not be created",
+                    e);
         }
 
         // 3. 执行工具调用链

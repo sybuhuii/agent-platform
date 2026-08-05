@@ -1,6 +1,7 @@
 package com.ksyun.agent.infrastructure.config;
 
 import com.ksyun.agent.application.supervisor.AuthenticatedSupervisorApplicationService;
+import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
 import com.ksyun.agent.application.supervisor.SupervisorDevApplicationService;
 import com.ksyun.agent.core.run.ThreadIdGenerator;
 import com.ksyun.agent.core.store.CheckpointIdGenerator;
@@ -232,13 +233,15 @@ public class SupervisorEngineConfiguration {
             SupervisorEngine supervisorEngine,
             RunIdGenerator runIdGenerator,
             ThreadIdGenerator threadIdGenerator,
-            ThreadIdValidator threadIdValidator,
-            ThreadConversationCheckpointService threadConversationCheckpointService,
-            ThreadExecutionCoordinator threadExecutionCoordinator) {
+              ThreadIdValidator threadIdValidator,
+              ThreadConversationCheckpointService threadConversationCheckpointService,
+              ThreadExecutionCoordinator threadExecutionCoordinator,
+              ConversationHistoryApplicationService conversationHistoryApplicationService) {
         return new AuthenticatedSupervisorApplicationService(
                 supervisorRegistry, supervisorEngine, runIdGenerator,
-                threadIdGenerator, threadIdValidator,
-                threadConversationCheckpointService, threadExecutionCoordinator);
+                  threadIdGenerator, threadIdValidator,
+                  threadConversationCheckpointService, threadExecutionCoordinator,
+                  conversationHistoryApplicationService);
     }
 
     // --- SupervisorDevApplicationService ---

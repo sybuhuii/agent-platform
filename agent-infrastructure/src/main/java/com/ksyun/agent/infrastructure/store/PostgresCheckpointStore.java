@@ -14,7 +14,6 @@ import com.ksyun.agent.core.store.CheckpointStore;
 import com.ksyun.agent.infrastructure.checkpoint.CheckpointPayloadCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -75,13 +74,14 @@ public class PostgresCheckpointStore implements CheckpointStore {
             "INSERT INTO agent_checkpoints ("
                     + "checkpoint_id, run_id, thread_id, user_id, execution_type, purpose, "
                     + "agent_name, node_name, payload_version, payload_kind, payload, "
-                    + "pending_approval, status, version, created_at, updated_at"
-                    + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)";
+                    + "pending_approval, current_approval_id, status, version, created_at, updated_at"
+                    + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?) "
+                    + "ON CONFLICT DO NOTHING";
 
     private static final String SELECT_BASE =
             "SELECT checkpoint_id, run_id, thread_id, user_id, execution_type, purpose, "
                     + "agent_name, node_name, payload_version, payload_kind, payload, "
-                    + "pending_approval, status, version, created_at, updated_at "
+                    + "pending_approval, current_approval_id, status, version, created_at, updated_at "
                     + "FROM agent_checkpoints";
 
     private static final String LOAD_BY_RUN_ID_SQL =
@@ -107,7 +107,7 @@ public class PostgresCheckpointStore implements CheckpointStore {
             "UPDATE agent_checkpoints SET "
                     + "execution_type = ?, purpose = ?, agent_name = ?, node_name = ?, "
                     + "payload_version = ?, payload_kind = ?, payload = ?::jsonb, "
-                    + "pending_approval = ?::jsonb, status = ?, version = ?, updated_at = ? "
+                    + "pending_approval = ?::jsonb, current_approval_id = ?, status = ?, version = ?, updated_at = ? "
                     + "WHERE checkpoint_id = ? AND version = ?";
 
     private static final String DELETE_BY_RUN_ID_SQL =
@@ -134,25 +134,20 @@ public class PostgresCheckpointStore implements CheckpointStore {
 
     // ---- SQL: approval_records ----
 
-    private static final String UPSERT_APPROVAL_SQL =
+    private static final String INSERT_APPROVAL_SQL =
             "INSERT INTO approval_records ("
-                    + "approval_id, run_id, thread_id, user_id, agent_name, "
+                    + "approval_id, run_id, thread_id, user_id, checkpoint_id, agent_name, node_name, "
                     + "operation_type, operation_name, risk_level, reason, requested_at, "
-                    + "decided_by, decision_status, decided_at, decision_comment, "
+                    + "safe_arguments, decided_by, status, decided_at, decision_comment, "
                     + "created_at, updated_at"
-                    + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    + "ON CONFLICT (approval_id) DO UPDATE SET "
-                    + "decision_status = EXCLUDED.decision_status, "
-                    + "decided_by = EXCLUDED.decided_by, "
-                    + "decided_at = EXCLUDED.decided_at, "
-                    + "decision_comment = EXCLUDED.decision_comment, "
-                    + "updated_at = EXCLUDED.updated_at";
+                    + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?) "
+                    + "ON CONFLICT (approval_id) DO NOTHING";
 
     private static final String UPDATE_APPROVAL_DECISION_SQL =
             "UPDATE approval_records SET "
-                    + "decision_status = ?, decided_by = ?, decided_at = ?, "
+                    + "status = ?, decided_by = ?, decided_at = ?, "
                     + "decision_comment = ?, updated_at = ? "
-                    + "WHERE approval_id = ? AND decision_status IS NULL";
+                    + "WHERE approval_id = ? AND status = 'PENDING'";
 
     // ---- fields ----
 
@@ -188,12 +183,12 @@ public class PostgresCheckpointStore implements CheckpointStore {
         }
 
         transactionTemplate.executeWithoutResult(status -> {
-            try {
-                insertCheckpoint(checkpoint);
-                insertApprovalRecordIfNeeded(checkpoint);
-            } catch (DuplicateKeyException e) {
-                handleSaveDuplicateKey(checkpoint, e);
+            int affected = insertCheckpoint(checkpoint);
+            if (affected == 0) {
+                handleSaveConflict(checkpoint);
+                return;
             }
+            insertApprovalRecordIfNeeded(checkpoint);
         });
 
         log.debug("Checkpoint saved: checkpointId={}, runId={}, version={}, "
@@ -301,6 +296,7 @@ public class PostgresCheckpointStore implements CheckpointStore {
                             checkpoint.purpose()),
                     codec.encode(checkpoint),
                     encodeApprovalOrNull(checkpoint.pendingApproval()),
+                    currentApprovalId(checkpoint),
                     checkpoint.status().name(),
                     checkpoint.version(),
                     Timestamp.from(checkpoint.updatedAt()),
@@ -311,8 +307,7 @@ public class PostgresCheckpointStore implements CheckpointStore {
                 return false;
             }
 
-            // 如果 pendingApproval 有决策，同步更新 approval_records
-            updateApprovalDecisionIfNeeded(checkpoint);
+            syncApprovalRecordIfNeeded(checkpoint);
 
             return true;
         });
@@ -413,8 +408,8 @@ public class PostgresCheckpointStore implements CheckpointStore {
 
     // ---- 内部方法 ----
 
-    private void insertCheckpoint(AgentCheckpoint checkpoint) {
-        jdbcTemplate.update(INSERT_SQL,
+    private int insertCheckpoint(AgentCheckpoint checkpoint) {
+        return jdbcTemplate.update(INSERT_SQL,
                 checkpoint.checkpointId(),
                 checkpoint.runId(),
                 checkpoint.threadId(),
@@ -429,6 +424,7 @@ public class PostgresCheckpointStore implements CheckpointStore {
                         checkpoint.purpose()),
                 codec.encode(checkpoint),
                 encodeApprovalOrNull(checkpoint.pendingApproval()),
+                currentApprovalId(checkpoint),
                 checkpoint.status().name(),
                 checkpoint.version(),
                 Timestamp.from(checkpoint.createdAt()),
@@ -452,11 +448,6 @@ public class PostgresCheckpointStore implements CheckpointStore {
 
         InterruptPayload payload = pa.payload();
 
-        // decision_status: PENDING 时为 null（数据库约定）
-        String decisionStatus = pa.status() == ApprovalStatus.PENDING
-                ? null
-                : pa.status().name();
-
         String decidedBy = null;
         Timestamp decidedAt = null;
         String decisionComment = null;
@@ -468,35 +459,42 @@ public class PostgresCheckpointStore implements CheckpointStore {
             decisionComment = decision.comment();
         }
 
-        jdbcTemplate.update(UPSERT_APPROVAL_SQL,
+        int affected = jdbcTemplate.update(INSERT_APPROVAL_SQL,
                 payload.approvalId(),
                 payload.runId(),
                 payload.threadId(),
                 payload.userId(),
+                checkpoint.checkpointId(),
                 payload.agentName(),
+                payload.nodeName(),
                 payload.operationType().name(),
                 payload.operationName(),
                 payload.riskLevel().name(),
                 payload.reason(),
                 Timestamp.from(payload.requestedAt()),
+                codec.encodeSafeArguments(payload.safeArguments()),
                 decidedBy,
-                decisionStatus,
+                pa.status().name(),
                 decidedAt,
                 decisionComment,
                 Timestamp.from(pa.createdAt()),
                 Timestamp.from(pa.updatedAt()));
+        if (affected == 0) {
+            verifyApprovalIdentity(checkpoint, pa);
+        }
     }
 
     /**
      * 更新时如果 pendingApproval 有决策，同步更新 approval_records。
      */
-    private void updateApprovalDecisionIfNeeded(AgentCheckpoint checkpoint) {
+    private void syncApprovalRecordIfNeeded(AgentCheckpoint checkpoint) {
         PendingApproval pa = checkpoint.pendingApproval();
         if (pa == null) {
             return;
         }
 
         if (pa.status() == ApprovalStatus.PENDING) {
+            insertApprovalRecordIfNeeded(checkpoint);
             return;
         }
 
@@ -515,25 +513,7 @@ public class PostgresCheckpointStore implements CheckpointStore {
                 pa.approvalId());
 
         if (affected == 0) {
-            // approval_records 可能已被外部决策更新，或已存在决策
-            // 使用 upsert 保证最终一致
-            jdbcTemplate.update(UPSERT_APPROVAL_SQL,
-                    pa.approvalId(),
-                    pa.runId(),
-                    pa.threadId(),
-                    pa.userId(),
-                    pa.payload().agentName(),
-                    pa.payload().operationType().name(),
-                    pa.payload().operationName(),
-                    pa.payload().riskLevel().name(),
-                    pa.payload().reason(),
-                    Timestamp.from(pa.payload().requestedAt()),
-                    decision.decidedBy(),
-                    pa.status().name(),
-                    Timestamp.from(decision.decidedAt()),
-                    decision.comment(),
-                    Timestamp.from(pa.createdAt()),
-                    Timestamp.from(pa.updatedAt()));
+            insertApprovalRecordIfNeeded(checkpoint);
         }
     }
 
@@ -547,9 +527,7 @@ public class PostgresCheckpointStore implements CheckpointStore {
      *   <li>相同 (run_id, purpose) 但不同 checkpoint_id → 抛 CHECKPOINT_CONFLICT</li>
      * </ul>
      */
-    private void handleSaveDuplicateKey(
-            AgentCheckpoint checkpoint,
-            DuplicateKeyException ignored) {
+    private void handleSaveConflict(AgentCheckpoint checkpoint) {
         // 先尝试按 checkpoint_id 加载已有行
         AgentCheckpoint existing = loadByCheckpointId(
                 checkpoint.checkpointId());
@@ -575,6 +553,22 @@ public class PostgresCheckpointStore implements CheckpointStore {
                 "Checkpoint conflict on (runId, purpose): runId="
                         + checkpoint.runId()
                         + ", purpose=" + checkpoint.purpose());
+    }
+
+    private void verifyApprovalIdentity(AgentCheckpoint checkpoint, PendingApproval approval) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM approval_records WHERE approval_id = ? AND run_id = ? "
+                        + "AND thread_id = ? AND user_id = ? AND checkpoint_id = ?",
+                Integer.class, approval.approvalId(), approval.runId(), approval.threadId(),
+                approval.userId(), checkpoint.checkpointId());
+        if (count == null || count == 0) {
+            throw new AgentFrameworkException(AgentErrorCode.CHECKPOINT_CONFLICT,
+                    "Approval identifier conflicts with another checkpoint");
+        }
+    }
+
+    private String currentApprovalId(AgentCheckpoint checkpoint) {
+        return checkpoint.pendingApproval() == null ? null : checkpoint.pendingApproval().approvalId();
     }
 
     private AgentCheckpoint loadByCheckpointId(String checkpointId) {

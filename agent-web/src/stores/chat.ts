@@ -32,7 +32,14 @@ import { jsonTransport } from '@/chat/jsonTransport'
 import type { ChatTransport } from '@/chat/chatTransport'
 import { AbortRequestError } from '@/api/errors'
 import { listSupervisors } from '@/api/framework'
-import { listConversations, listMessages } from '@/api/conversations'
+import {
+  archiveConversation,
+  listConversations,
+  listMessages,
+  pinConversation,
+  renameConversation as renameConversationOnServer,
+  unpinConversation
+} from '@/api/conversations'
 
 export const useChatStore = defineStore('chat', () => {
   // ─── 内部 Supervisor 名称（用户不可见） ───
@@ -588,7 +595,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /** 重命名会话；空标题不覆盖现有标题。 */
-  function renameConversation(conversationId: string, title: string): boolean {
+  async function renameConversation(conversationId: string, title: string): Promise<boolean> {
     const normalizedTitle = title.trim().slice(0, 80)
     if (!normalizedTitle) return false
 
@@ -597,17 +604,26 @@ export const useChatStore = defineStore('chat', () => {
     )
     if (!conversation) return false
 
+    if (conversation.threadId) {
+      await renameConversationOnServer(conversation.threadId, normalizedTitle)
+    }
+
     conversation.title = normalizedTitle
     saveToStorage()
     return true
   }
 
   /** 设置会话置顶状态。 */
-  function setConversationPinned(conversationId: string, pinned: boolean): void {
+  async function setConversationPinned(conversationId: string, pinned: boolean): Promise<void> {
     const conversation = conversations.value.find(
       item => item.conversationId === conversationId
     )
     if (!conversation || conversation.pinned === pinned) return
+
+    if (conversation.threadId) {
+      if (pinned) await pinConversation(conversation.threadId)
+      else await unpinConversation(conversation.threadId)
+    }
 
     conversation.pinned = pinned
     saveToStorage()
@@ -622,9 +638,14 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /** 删除会话 */
-  function deleteConversation(conversationId: string): void {
+  async function deleteConversation(conversationId: string): Promise<void> {
     const idx = conversations.value.findIndex(c => c.conversationId === conversationId)
     if (idx < 0) return
+
+    const conversation = conversations.value[idx]!
+    if (conversation.threadId) {
+      await archiveConversation(conversation.threadId)
+    }
 
     if (activeRequest?.conversationId === conversationId) {
       activeRequest.controller.abort()
@@ -664,11 +685,11 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function loadConversationsFromBackend(): Promise<void> {
     try {
-      const threads = await listConversations({ pageSize: 100 })
+      const page = await listConversations({ pageSize: 100 })
       const now = Date.now()
       // 保留本地未发送的新对话（无 threadId）
       const localDrafts = conversations.value.filter(c => !c.threadId)
-      const loaded: Conversation[] = threads.map(t => ({
+      const loaded: Conversation[] = page.items.map(t => ({
         conversationId: t.threadId,
         threadId: t.threadId,
         title: t.title || '新对话',
@@ -699,8 +720,8 @@ export const useChatStore = defineStore('chat', () => {
     const conv = conversations.value.find(c => c.conversationId === conversationId)
     if (!conv || !conv.threadId) return
     try {
-      const msgs = await listMessages(conv.threadId, undefined, 100)
-      const mapped: ChatMessage[] = msgs.map(m => ({
+      const page = await listMessages(conv.threadId, undefined, 100)
+      const mapped: ChatMessage[] = page.items.map(m => ({
         role: m.role === 'USER' ? 'user' : 'assistant',
         id: m.messageId,
         content: m.content,

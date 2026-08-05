@@ -1,7 +1,5 @@
 package com.ksyun.agent.api.dto;
 
-import java.time.Instant;
-
 /**
  * 会话线索响应 DTO。
  */
@@ -10,7 +8,8 @@ public record ConversationThreadResponse(
         String title,
         boolean pinned,
         boolean archived,
-        String agentName,
+        String participantType,
+        String participantName,
         long createdAtEpochMillis,
         long lastMessageAtEpochMillis
 ) {}

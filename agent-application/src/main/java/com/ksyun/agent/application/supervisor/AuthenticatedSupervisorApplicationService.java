@@ -1,6 +1,8 @@
 package com.ksyun.agent.application.supervisor;
 
+import com.ksyun.agent.application.conversation.ConversationHistoryApplicationService;
 import com.ksyun.agent.core.agent.AgentResult;
+import com.ksyun.agent.core.conversation.ConversationParticipantType;
 import com.ksyun.agent.core.agent.AgentTask;
 import com.ksyun.agent.core.exception.AgentErrorCode;
 import com.ksyun.agent.core.exception.AgentFrameworkException;
@@ -54,6 +56,7 @@ public class AuthenticatedSupervisorApplicationService {
     private final ThreadIdValidator threadIdValidator;
     private final ThreadConversationCheckpointService threadConversationCheckpointService;
     private final ThreadExecutionCoordinator threadExecutionCoordinator;
+    private final ConversationHistoryApplicationService conversationHistoryApplicationService;
 
     public AuthenticatedSupervisorApplicationService(SupervisorRegistry supervisorRegistry,
                                                        SupervisorEngine supervisorEngine,
@@ -61,7 +64,8 @@ public class AuthenticatedSupervisorApplicationService {
                                                        ThreadIdGenerator threadIdGenerator,
                                                        ThreadIdValidator threadIdValidator,
                                                        ThreadConversationCheckpointService threadConversationCheckpointService,
-                                                       ThreadExecutionCoordinator threadExecutionCoordinator) {
+                                                       ThreadExecutionCoordinator threadExecutionCoordinator,
+                                                       ConversationHistoryApplicationService conversationHistoryApplicationService) {
         this.supervisorRegistry = supervisorRegistry;
         this.supervisorEngine = supervisorEngine;
         this.runIdGenerator = runIdGenerator;
@@ -69,6 +73,7 @@ public class AuthenticatedSupervisorApplicationService {
         this.threadIdValidator = threadIdValidator;
         this.threadConversationCheckpointService = threadConversationCheckpointService;
         this.threadExecutionCoordinator = threadExecutionCoordinator;
+        this.conversationHistoryApplicationService = conversationHistoryApplicationService;
     }
 
     /**
@@ -163,6 +168,8 @@ public class AuthenticatedSupervisorApplicationService {
             Optional<ThreadConversationState> previousState = Optional.empty();
 
             if (continuation) {
+                conversationHistoryApplicationService.validateContinuationIfPresent(
+                        session, threadId, ConversationParticipantType.SUPERVISOR, supervisorName);
                 previousState = threadConversationCheckpointService.load(
                         session.userId(),
                         threadId,
@@ -251,6 +258,10 @@ public class AuthenticatedSupervisorApplicationService {
             log.info("No stable state to save: runId={}, threadId={}, resultStatus={}",
                     runId, threadId, result.status());
         }
+
+        conversationHistoryApplicationService.recordRound(
+                session, threadId, ConversationParticipantType.SUPERVISOR,
+                definition.name(), message, runId, result);
 
         // ---- 返回 ----
         return new AuthenticatedSupervisorRunResult(runId, threadId, definition.name(), result);
